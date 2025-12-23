@@ -1,0 +1,52 @@
+# ============================================================
+# Shelfarr Development Dockerfile
+# Hot reloading for Go backend using Air
+# ============================================================
+
+FROM golang:1.22-alpine
+
+# Install development and runtime dependencies
+RUN apk add --no-cache \
+    gcc \
+    musl-dev \
+    ffmpeg \
+    calibre \
+    git \
+    curl
+
+# Install Air for hot reloading
+RUN go install github.com/air-verse/air@latest
+
+# Create non-root user for development
+RUN addgroup -g 1000 -S shelfarr && \
+    adduser -u 1000 -S shelfarr -G shelfarr
+
+WORKDIR /app
+
+# Copy go mod files first for dependency caching
+COPY --chown=shelfarr:shelfarr backend/go.mod backend/go.sum ./backend/
+
+WORKDIR /app/backend
+RUN go mod download
+
+WORKDIR /app
+
+# Create directories
+RUN mkdir -p /config /books /audiobooks /downloads && \
+    chown -R shelfarr:shelfarr /config /books /audiobooks /downloads /app
+
+# Environment variables for development
+ENV CGO_ENABLED=1 \
+    SHELFARR_CONFIG_PATH=/config \
+    SHELFARR_BOOKS_PATH=/books \
+    SHELFARR_AUDIOBOOKS_PATH=/audiobooks \
+    SHELFARR_DOWNLOADS_PATH=/downloads \
+    SHELFARR_LISTEN_ADDR=:8080
+
+EXPOSE 8080
+
+# Switch to non-root user
+USER shelfarr
+
+# Air config will be mounted from host
+CMD ["air", "-c", ".air.toml"]

@@ -1,0 +1,115 @@
+# ============================================================
+# Shelfarr Docker Compose - Production Configuration
+# ============================================================
+#
+# Quick Start:
+#   1. Copy this file to your deployment directory
+#   2. Update volume paths to your actual media locations
+#   3. Set your Hardcover API key and other secrets
+#   4. Run: docker compose up -d
+#
+# ============================================================
+
+version: '3.8'
+
+services:
+  shelfarr:
+    image: shelfarr/shelfarr:latest  # Or build from source with 'build' section
+    # build:
+    #   context: ..
+    #   dockerfile: docker/Dockerfile
+    container_name: shelfarr
+    restart: unless-stopped
+    
+    ports:
+      - "8080:8080"
+    
+    volumes:
+      # Configuration and database (persistent)
+      - shelfarr-config:/config
+      
+      # Media directories (update these paths!)
+      - /path/to/your/books:/books
+      - /path/to/your/audiobooks:/audiobooks
+      - /path/to/your/downloads:/downloads
+      
+      # Optional: Recycle bin for deleted files
+      # - shelfarr-recycle:/config/recycle
+    
+    environment:
+      # Timezone
+      - TZ=America/New_York
+      
+      # Hardcover.app API (required for metadata)
+      - HARDCOVER_API_KEY=${HARDCOVER_API_KEY:-}
+      
+      # Authentication
+      - SHELFARR_JWT_SECRET=${JWT_SECRET:-please-change-this-secret}
+      # - SHELFARR_ENABLE_SSO=false
+      # - SHELFARR_SSO_HEADER=Remote-User
+      
+      # SMTP for Kindle delivery (optional)
+      # - SMTP_HOST=smtp.gmail.com
+      # - SMTP_PORT=587
+      # - SMTP_USERNAME=your-email@gmail.com
+      # - SMTP_PASSWORD=your-app-password
+      # - SMTP_FROM=your-email@gmail.com
+    
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+
+  # --------------------------------------------------------
+  # Optional: qBittorrent (torrent client)
+  # --------------------------------------------------------
+  # qbittorrent:
+  #   image: lscr.io/linuxserver/qbittorrent:latest
+  #   container_name: shelfarr-qbittorrent
+  #   environment:
+  #     - PUID=1000
+  #     - PGID=1000
+  #     - TZ=America/New_York
+  #     - WEBUI_PORT=8081
+  #   volumes:
+  #     - qbittorrent-config:/config
+  #     - /path/to/your/downloads:/downloads
+  #   ports:
+  #     - 8081:8081
+  #     - 6881:6881
+  #     - 6881:6881/udp
+  #   restart: unless-stopped
+
+  # --------------------------------------------------------
+  # Optional: SABnzbd (Usenet client)
+  # --------------------------------------------------------
+  # sabnzbd:
+  #   image: lscr.io/linuxserver/sabnzbd:latest
+  #   container_name: shelfarr-sabnzbd
+  #   environment:
+  #     - PUID=1000
+  #     - PGID=1000
+  #     - TZ=America/New_York
+  #   volumes:
+  #     - sabnzbd-config:/config
+  #     - /path/to/your/downloads:/downloads
+  #   ports:
+  #     - 8082:8080
+  #   restart: unless-stopped
+
+volumes:
+  shelfarr-config:
+    driver: local
+  # qbittorrent-config:
+  #   driver: local
+  # sabnzbd-config:
+  #   driver: local
+
+# ============================================================
+# Networks (optional - for reverse proxy setups)
+# ============================================================
+# networks:
+#   proxy:
+#     external: true

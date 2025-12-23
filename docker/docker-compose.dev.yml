@@ -1,0 +1,97 @@
+# ============================================================
+# Shelfarr Development Docker Compose
+# Live reloading for both backend (Go) and frontend (React)
+# ============================================================
+#
+# Usage:
+#   docker compose -f docker/docker-compose.dev.yml up
+#
+# Access:
+#   - Frontend: http://localhost:5173
+#   - Backend API: http://localhost:8080
+#
+# ============================================================
+
+version: '3.8'
+
+services:
+  # ------------------------------------------------------------
+  # Go Backend with Air hot reloading
+  # ------------------------------------------------------------
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.dev
+    container_name: shelfarr-backend-dev
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      # Mount source code for hot reloading
+      - ../backend:/app/backend
+      
+      # Air configuration
+      - ../.air.toml:/app/.air.toml
+      
+      # Persistent config/database
+      - shelfarr-config-dev:/config
+      
+      # Test data directories
+      - ../test-data/books:/books
+      - ../test-data/audiobooks:/audiobooks
+      - ../test-data/downloads:/downloads
+    environment:
+      - SHELFARR_CONFIG_PATH=/config
+      - SHELFARR_DB_PATH=/config/shelfarr.db
+      - SHELFARR_LISTEN_ADDR=:8080
+      - SHELFARR_BOOKS_PATH=/books
+      - SHELFARR_AUDIOBOOKS_PATH=/audiobooks
+      - SHELFARR_DOWNLOADS_PATH=/downloads
+      - HARDCOVER_API_URL=https://api.hardcover.app/v1/graphql
+      - HARDCOVER_API_KEY=${HARDCOVER_API_KEY:-}
+      - SHELFARR_JWT_SECRET=dev-secret-key-change-in-production
+      - GO_ENV=development
+    working_dir: /app/backend
+    command: air -c /app/.air.toml
+
+  # ------------------------------------------------------------
+  # React Frontend with Vite dev server
+  # ------------------------------------------------------------
+  frontend:
+    image: node:20-alpine
+    container_name: shelfarr-frontend-dev
+    restart: unless-stopped
+    ports:
+      - "5173:5173"
+    volumes:
+      # Mount source code
+      - ../frontend:/app
+      
+      # Anonymous volume for node_modules (prevents host overwrite)
+      - /app/node_modules
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    environment:
+      - VITE_API_URL=http://localhost:8080
+    depends_on:
+      - backend
+
+volumes:
+  shelfarr-config-dev:
+    driver: local
+
+# ============================================================
+# Optional: Development database viewer
+# ============================================================
+# services:
+#   sqlite-web:
+#     image: tomdesinto/sqlite-web
+#     container_name: shelfarr-sqlite-web
+#     ports:
+#       - "8081:8080"
+#     volumes:
+#       - shelfarr-config-dev:/data
+#     environment:
+#       - SQLITE_DATABASE=/data/shelfarr.db
+#     depends_on:
+#       - backend

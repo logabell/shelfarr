@@ -1,0 +1,115 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap');
+
+@theme {
+  --radius: 0.5rem;
+  
+  --color-background: oklch(0.145 0.025 264);
+  --color-foreground: oklch(0.985 0.002 247);
+  --color-card: oklch(0.17 0.025 264);
+  --color-card-foreground: oklch(0.985 0.002 247);
+  --color-popover: oklch(0.17 0.025 264);
+  --color-popover-foreground: oklch(0.985 0.002 247);
+  --color-primary: oklch(0.62 0.19 250);
+  --color-primary-foreground: oklch(0.2 0.04 264);
+  --color-secondary: oklch(0.27 0.04 264);
+  --color-secondary-foreground: oklch(0.985 0.002 247);
+  --color-muted: oklch(0.27 0.04 264);
+  --color-muted-foreground: oklch(0.71 0.02 247);
+  --color-accent: oklch(0.27 0.04 264);
+  --color-accent-foreground: oklch(0.985 0.002 247);
+  --color-destructive: oklch(0.45 0.15 27);
+  --color-destructive-foreground: oklch(0.985 0.002 247);
+  --color-border: oklch(0.27 0.04 264);
+  --color-input: oklch(0.27 0.04 264);
+  --color-ring: oklch(0.55 0.18 250);
+  
+  /* Status colors */
+  --color-status-downloaded: oklch(0.72 0.19 142);
+  --color-status-unmonitored: oklch(0.62 0.19 250);
+  --color-status-downloading: oklch(0.75 0.18 55);
+  --color-status-missing: oklch(0.63 0.22 25);
+  --color-status-unreleased: oklch(0.65 0.2 300);
+  --color-status-black: oklch(0.25 0.02 264);
+  
+  --font-sans: 'Geist', system-ui, sans-serif;
+  --font-mono: 'Geist Mono', monospace;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+  }
+}
+
+/* Custom scrollbar for dark theme */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-background);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-muted);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-muted-foreground);
+}
+
+/* Book card status bar colors */
+.status-bar {
+  height: 4px;
+  width: 100%;
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  border-radius: 0 0 var(--radius) var(--radius);
+}
+
+.status-downloaded { background-color: var(--color-status-downloaded); }
+.status-unmonitored { background-color: var(--color-status-unmonitored); }
+.status-downloading { background-color: var(--color-status-downloading); }
+.status-missing { background-color: var(--color-status-missing); }
+.status-unreleased { background-color: var(--color-status-unreleased); }
+.status-black { background-color: var(--color-status-black); }
+
+/* Smooth animations */
+.book-card {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.book-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.4);
+}
+
+/* Loading skeleton animation */
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--color-muted) 25%,
+    color-mix(in oklch, var(--color-muted-foreground) 10%, transparent) 50%,
+    var(--color-muted) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}

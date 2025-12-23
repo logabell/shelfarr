@@ -1,0 +1,73 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+shelfarr
+
+# Test binary
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Go workspace file
+go.work
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Backend
+backend/shelfarr
+backend/*.db
+backend/*.db-journal
+backend/*.db-shm
+backend/*.db-wal
+
+# Node modules (any location)
+node_modules/
+
+# Frontend
+frontend/dist/
+frontend/.vite/
+
+# Config and data (local development)
+config/
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+logs/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Temporary files
+tmp/
+temp/
+
+# Build artifacts
+build/
+dist/
+
+# Test coverage
+coverage/
+*.cover
+*.coverage
+
+# Cursor/AI IDE
+.cursor/
