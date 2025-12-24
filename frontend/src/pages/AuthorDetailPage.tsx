@@ -10,7 +10,9 @@ import {
   ArrowLeft,
   Plus,
   CheckCircle2,
-  Library
+  Library,
+  AlertCircle,
+  X
 } from 'lucide-react';
 import { getAuthor, updateAuthor, addHardcoverBook, deleteBook } from '@/api/client';
 import { Button } from '@/components/ui/button';
@@ -28,6 +30,11 @@ export default function AuthorDetailPage() {
   const queryClient = useQueryClient();
   const [addingBooks, setAddingBooks] = useState<Set<string>>(new Set());
   const [deletingBooks, setDeletingBooks] = useState<Set<number>>(new Set());
+  const [notifications, setNotifications] = useState<Array<{
+    id: string;
+    type: 'success' | 'error';
+    message: string;
+  }>>([]);
   const [sortFilterState, setSortFilterState] = useState<SortFilterState>(
     getDefaultSortFilterState(false)
   );
@@ -48,14 +55,21 @@ export default function AuthorDetailPage() {
   });
 
   const addBookMutation = useMutation({
-    mutationFn: (hardcoverId: string) => addHardcoverBook(hardcoverId, { monitored: true }),
+    mutationFn: (hardcoverId: string) => addHardcoverBook(hardcoverId, { 
+      monitored: true,
+      forceAuthorId: parseInt(id!)
+    }),
     onSuccess: (_, hardcoverId) => {
       setAddingBooks(prev => {
         const next = new Set(prev);
         next.delete(hardcoverId);
         return next;
       });
-      queryClient.invalidateQueries({ queryKey: ['author', id] });
+      queryClient.resetQueries({ queryKey: ['author', id] });
+      queryClient.refetchQueries({ queryKey: ['author', id] });
+      queryClient.invalidateQueries({ queryKey: ['library'] });
+      queryClient.invalidateQueries({ queryKey: ['libraryStats'] });
+      addNotification('success', 'Book added to library');
     },
     onError: (error: Error, hardcoverId) => {
       setAddingBooks(prev => {
@@ -63,7 +77,10 @@ export default function AuthorDetailPage() {
         next.delete(hardcoverId);
         return next;
       });
-      console.error('Failed to add book:', error.message);
+      const message = error.message.includes('409') || error.message.includes('Conflict')
+        ? 'Book is already in library'
+        : 'Failed to add book';
+      addNotification('error', message);
     },
   });
 
@@ -75,8 +92,11 @@ export default function AuthorDetailPage() {
         next.delete(bookId);
         return next;
       });
-      queryClient.invalidateQueries({ queryKey: ['author', id] });
+      queryClient.resetQueries({ queryKey: ['author', id] });
+      queryClient.refetchQueries({ queryKey: ['author', id] });
       queryClient.invalidateQueries({ queryKey: ['library'] });
+      queryClient.invalidateQueries({ queryKey: ['libraryStats'] });
+      addNotification('success', 'Book removed from library');
     },
     onError: (error: Error, bookId) => {
       setDeletingBooks(prev => {
@@ -84,7 +104,7 @@ export default function AuthorDetailPage() {
         next.delete(bookId);
         return next;
       });
-      console.error('Failed to delete book:', error.message);
+      addNotification('error', error.message || 'Failed to delete book');
     },
   });
 
@@ -109,6 +129,18 @@ export default function AuthorDetailPage() {
   const handleToggleMonitored = () => {
     if (!author) return;
     updateAuthorMutation.mutate({ authorId: author.id, monitored: !author.monitored });
+  };
+
+  const addNotification = (type: 'success' | 'error', message: string) => {
+    const id = Math.random().toString(36).substring(7);
+    setNotifications(prev => [...prev, { id, type, message }]);
+    setTimeout(() => {
+      setNotifications(prev => prev.filter(n => n.id !== id));
+    }, 3000);
+  };
+
+  const removeNotification = (id: string) => {
+    setNotifications(prev => prev.filter(n => n.id !== id));
   };
 
   // Must compute derived data before early returns to satisfy React hooks rules
@@ -186,6 +218,34 @@ export default function AuthorDetailPage() {
 
   return (
     <div className="space-y-6 p-6">
+      {notifications.length > 0 && (
+        <div className="fixed top-20 right-4 z-50 flex flex-col gap-2">
+          {notifications.map(notification => (
+            <div
+              key={notification.id}
+              className={`flex items-center gap-3 px-4 py-3 rounded-lg shadow-lg ${
+                notification.type === 'success'
+                  ? 'bg-green-500/90 text-white'
+                  : 'bg-red-500/90 text-white'
+              }`}
+            >
+              {notification.type === 'success' ? (
+                <CheckCircle2 className="h-5 w-5" />
+              ) : (
+                <AlertCircle className="h-5 w-5" />
+              )}
+              <span className="text-sm font-medium">{notification.message}</span>
+              <button
+                onClick={() => removeNotification(notification.id)}
+                className="ml-2 hover:opacity-70"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Back Link */}
       <Link
         to="/authors"
