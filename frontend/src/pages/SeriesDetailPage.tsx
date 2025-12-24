@@ -12,7 +12,7 @@ import {
   AlertCircle,
   X
 } from 'lucide-react';
-import { getSeriesDetail, addHardcoverBook, deleteBook } from '@/api/client';
+import { getSeriesDetail, addHardcoverBook, deleteBook, invalidateAllBookQueries, type SeriesDetail, type Book } from '@/api/client';
 import { Button } from '@/components/ui/button';
 import { CatalogBookCard } from '@/components/library/CatalogBookCard';
 import { AddSeriesModal } from '@/components/series/AddSeriesModal';
@@ -32,7 +32,7 @@ export default function SeriesDetailPage() {
   const [isAddSeriesModalOpen, setIsAddSeriesModalOpen] = useState(false);
   const [notifications, setNotifications] = useState<Array<{
     id: string;
-    type: 'success' | 'error';
+    type: 'success' | 'error' | 'info';
     message: string;
   }>>([]);
   const [sortFilterState, setSortFilterState] = useState<SortFilterState>(
@@ -50,16 +50,45 @@ export default function SeriesDetailPage() {
       monitored: true,
       forceSeriesId: parseInt(id!)
     }),
-    onSuccess: (_, hardcoverId) => {
+    onSuccess: (response, hardcoverId) => {
       setAddingBooks(prev => {
         const next = new Set(prev);
         next.delete(hardcoverId);
         return next;
       });
-      queryClient.resetQueries({ queryKey: ['series', id] });
-      queryClient.refetchQueries({ queryKey: ['series', id] });
-      queryClient.invalidateQueries({ queryKey: ['library'] });
-      queryClient.invalidateQueries({ queryKey: ['libraryStats'] });
+
+      queryClient.setQueryData<SeriesDetail>(['series', id], (old) => {
+        if (!old) return old;
+        return {
+          ...old,
+          inLibrary: (old.inLibrary || 0) + 1,
+          books: old.books.map(b => 
+            b.hardcoverId === hardcoverId 
+              ? { 
+                  ...b, 
+                  inLibrary: true, 
+                  book: { 
+                    id: response.bookId, 
+                    hardcoverId,
+                    title: b.title,
+                    coverUrl: b.coverUrl || '',
+                    rating: b.rating,
+                    status: 'missing',
+                    monitored: true,
+                    hasEbook: false,
+                    hasAudiobook: false,
+                    isbn: '',
+                    pageCount: 0,
+                    description: '',
+                    sortTitle: b.title
+                  } as unknown as Book
+                } 
+              : b
+          )
+        };
+      });
+
+      invalidateAllBookQueries(queryClient);
       addNotification('success', 'Book added to library');
     },
     onError: (error: Error, hardcoverId) => {
@@ -68,10 +97,12 @@ export default function SeriesDetailPage() {
         next.delete(hardcoverId);
         return next;
       });
-      const message = error.message.includes('409') || error.message.includes('Conflict')
-        ? 'Book is already in library'
-        : 'Failed to add book';
-      addNotification('error', message);
+      if (error.message.includes('409') || error.message.includes('Conflict') || error.message.includes('already in library')) {
+        invalidateAllBookQueries(queryClient);
+        addNotification('info', 'Book is already in your library');
+      } else {
+        addNotification('error', 'Failed to add book');
+      }
     },
   });
 
@@ -83,10 +114,21 @@ export default function SeriesDetailPage() {
         next.delete(bookId);
         return next;
       });
-      queryClient.resetQueries({ queryKey: ['series', id] });
-      queryClient.refetchQueries({ queryKey: ['series', id] });
-      queryClient.invalidateQueries({ queryKey: ['library'] });
-      queryClient.invalidateQueries({ queryKey: ['libraryStats'] });
+
+      queryClient.setQueryData<SeriesDetail>(['series', id], (old) => {
+        if (!old) return old;
+        return {
+          ...old,
+          inLibrary: Math.max(0, (old.inLibrary || 0) - 1),
+          books: old.books.map(b => 
+            b.book?.id === bookId 
+              ? { ...b, inLibrary: false, book: undefined } 
+              : b
+          )
+        };
+      });
+
+      invalidateAllBookQueries(queryClient);
       addNotification('success', 'Book removed from library');
     },
     onError: (error: Error, bookId) => {
@@ -95,6 +137,23 @@ export default function SeriesDetailPage() {
         next.delete(bookId);
         return next;
       });
+      
+      if (error.message.includes('404')) {
+        queryClient.setQueryData<SeriesDetail>(['series', id], (old) => {
+            if (!old) return old;
+            return {
+              ...old,
+              inLibrary: Math.max(0, (old.inLibrary || 0) - 1),
+              books: old.books.map(b => 
+                b.book?.id === bookId 
+                  ? { ...b, inLibrary: false, book: undefined } 
+                  : b
+              )
+            };
+          });
+          addNotification('success', 'Book removed from library');
+          return;
+      }
       addNotification('error', error.message || 'Failed to delete book');
     },
   });
@@ -119,7 +178,7 @@ export default function SeriesDetailPage() {
     });
   };
 
-  const addNotification = (type: 'success' | 'error', message: string) => {
+  const addNotification = (type: 'success' | 'error' | 'info', message: string) => {
     const id = Math.random().toString(36).substring(7);
     setNotifications(prev => [...prev, { id, type, message }]);
     setTimeout(() => {
@@ -184,11 +243,15 @@ export default function SeriesDetailPage() {
               className={`flex items-center gap-3 px-4 py-3 rounded-lg shadow-lg ${
                 notification.type === 'success'
                   ? 'bg-green-500/90 text-white'
+                  : notification.type === 'info'
+                  ? 'bg-blue-500/90 text-white'
                   : 'bg-red-500/90 text-white'
               }`}
             >
               {notification.type === 'success' ? (
                 <CheckCircle2 className="h-5 w-5" />
+              ) : notification.type === 'info' ? (
+                <AlertCircle className="h-5 w-5" />
               ) : (
                 <AlertCircle className="h-5 w-5" />
               )}

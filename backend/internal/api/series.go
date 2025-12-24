@@ -81,20 +81,6 @@ func (s *Server) getSeriesDetail(c echo.Context) error {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "Series not found"})
 	}
 
-	// Get all library books in this series (indexed by HardcoverID for quick lookup)
-	var libraryBooks []db.Book
-	s.db.Preload("Author").Preload("MediaFiles").
-		Where("series_id = ?", series.ID).
-		Find(&libraryBooks)
-
-	// Create a map for quick lookup
-	libraryBooksByHardcoverID := make(map[string]db.Book)
-	for _, book := range libraryBooks {
-		if book.HardcoverID != "" {
-			libraryBooksByHardcoverID[book.HardcoverID] = book
-		}
-	}
-
 	entries := make([]SeriesBookEntry, 0)
 	ownedCount := 0
 	totalBooks := 0
@@ -104,7 +90,7 @@ func (s *Server) getSeriesDetail(c echo.Context) error {
 		client, err := s.getHardcoverClient()
 		if err == nil {
 			languages := s.GetPreferredLanguages()
-			result, err := client.GetSeries(series.HardcoverID, languages, false)
+			result, err := client.GetSeries(series.HardcoverID, languages)
 			if err == nil && result.Series != nil {
 				log.Printf("[DEBUG] getSeriesDetail: fetched %d books from Hardcover for series '%s' (languages: %v)", len(result.Books), series.Name, languages)
 
@@ -118,6 +104,30 @@ func (s *Server) getSeriesDetail(c echo.Context) error {
 				}
 				series.CachedAt = &now
 				s.db.Save(&series)
+
+				// Collect all HardcoverIDs from the Hardcover response
+				hardcoverIDs := make([]string, 0, len(result.Books))
+				for _, hcBook := range result.Books {
+					if hcBook.ID != "" {
+						hardcoverIDs = append(hardcoverIDs, hcBook.ID)
+					}
+				}
+
+				// Query library books by HardcoverID to catch all books regardless of series_id in DB
+				libraryBooksByHardcoverID := make(map[string]db.Book)
+				if len(hardcoverIDs) > 0 {
+					var libraryBooks []db.Book
+					s.db.Preload("Author").Preload("MediaFiles").
+						Where("hardcover_id IN ?", hardcoverIDs).
+						Find(&libraryBooks)
+
+					for _, book := range libraryBooks {
+						if book.HardcoverID != "" {
+							libraryBooksByHardcoverID[book.HardcoverID] = book
+						}
+					}
+					log.Printf("[DEBUG] getSeriesDetail: found %d library books matching Hardcover IDs for series '%s'", len(libraryBooks), series.Name)
+				}
 
 				for _, hcBook := range result.Books {
 					var seriesIndex float32 = 0
@@ -139,7 +149,6 @@ func (s *Server) getSeriesDetail(c echo.Context) error {
 						entry.ReleaseYear = hcBook.ReleaseDate.Year()
 					}
 
-					// Check if this book is in our library
 					if libBook, exists := libraryBooksByHardcoverID[hcBook.ID]; exists {
 						entry.InLibrary = true
 						resp := bookToResponse(libBook)
@@ -158,44 +167,49 @@ func (s *Server) getSeriesDetail(c echo.Context) error {
 		}
 	}
 
-	// If we didn't get Hardcover data, fall back to library-only view
-	if len(entries) == 0 && len(libraryBooks) > 0 {
-		log.Printf("[DEBUG] getSeriesDetail: using library-only view for series '%s'", series.Name)
-		for _, book := range libraryBooks {
-			resp := bookToResponse(book)
-			var index float32 = 0
-			if book.SeriesIndex != nil {
-				index = *book.SeriesIndex
-			}
-			entry := SeriesBookEntry{
-				Index:       index,
-				Book:        &resp,
-				HardcoverID: book.HardcoverID,
-				Title:       book.Title,
-				CoverURL:    book.CoverURL,
-				Rating:      book.Rating,
-				InLibrary:   true,
-			}
-			if book.Author.Name != "" {
-				entry.AuthorName = book.Author.Name
-			}
-			if book.ReleaseDate != nil {
-				entry.ReleaseYear = book.ReleaseDate.Year()
-			}
-			entries = append(entries, entry)
-			totalBooks++
-			if book.Status == db.StatusDownloaded {
-				ownedCount++
+	// Fallback to library-only view if no Hardcover data (query by series_id)
+	if len(entries) == 0 {
+		var libraryBooks []db.Book
+		s.db.Preload("Author").Preload("MediaFiles").
+			Where("series_id = ?", series.ID).
+			Find(&libraryBooks)
+
+		if len(libraryBooks) > 0 {
+			log.Printf("[DEBUG] getSeriesDetail: using library-only view for series '%s' (%d books)", series.Name, len(libraryBooks))
+			for _, book := range libraryBooks {
+				resp := bookToResponse(book)
+				var index float32 = 0
+				if book.SeriesIndex != nil {
+					index = *book.SeriesIndex
+				}
+				entry := SeriesBookEntry{
+					Index:       index,
+					Book:        &resp,
+					HardcoverID: book.HardcoverID,
+					Title:       book.Title,
+					CoverURL:    book.CoverURL,
+					Rating:      book.Rating,
+					InLibrary:   true,
+				}
+				if book.Author.Name != "" {
+					entry.AuthorName = book.Author.Name
+				}
+				if book.ReleaseDate != nil {
+					entry.ReleaseYear = book.ReleaseDate.Year()
+				}
+				entries = append(entries, entry)
+				totalBooks++
+				if book.Status == db.StatusDownloaded {
+					ownedCount++
+				}
 			}
 		}
 	}
 
-	// Sort by index
 	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].Index < entries[j].Index
 	})
 
-	// Count books in library
 	inLibraryCount := 0
 	for _, entry := range entries {
 		if entry.InLibrary {
@@ -262,7 +276,7 @@ func (s *Server) addSeriesBooks(c echo.Context) error {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "Series not found"})
 	}
 
-	result, err := client.GetSeries(series.HardcoverID, languages, false)
+	result, err := client.GetSeries(series.HardcoverID, languages)
 	if err != nil {
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "Failed to fetch series from Hardcover"})
 	}

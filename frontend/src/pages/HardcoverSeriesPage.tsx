@@ -9,15 +9,12 @@ import {
   Check,
   Loader2,
   Star,
-  Book as BookIcon,
-  BookMarked,
-  Eye,
-  EyeOff
+  Book as BookIcon
 } from 'lucide-react'
 import { Topbar } from '@/components/layout/Topbar'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { getHardcoverSeries, addBook, type HardcoverBookDetail } from '@/api/client'
+import { getHardcoverSeries, addHardcoverBook, invalidateAllBookQueries, type HardcoverBookDetail, type HardcoverSeriesDetail, type Book } from '@/api/client'
 import { CatalogBookCard } from '@/components/library/CatalogBookCard'
 import { 
   BookSortFilter, 
@@ -35,30 +32,62 @@ export function HardcoverSeriesPage() {
   const [sortFilterState, setSortFilterState] = useState<SortFilterState>(
     getDefaultSortFilterState(true) // true = for series (default sort by series index)
   )
-  const [showPhysical, setShowPhysical] = useState(false)
 
   const { data: series, isLoading, error } = useQuery({
-    queryKey: ['hardcoverSeries', id, showPhysical],
-    queryFn: () => getHardcoverSeries(id!, showPhysical),
+    queryKey: ['hardcoverSeries', id],
+    queryFn: () => getHardcoverSeries(id!),
     enabled: !!id,
   })
 
   const addBookMutation = useMutation({
-    mutationFn: (bookId: string) => addBook(bookId, true),
-    onSuccess: (_, bookId) => {
+    mutationFn: (bookId: string) => addHardcoverBook(bookId, { monitored: true }),
+    onSuccess: (response, bookId) => {
       setAddingBooks(prev => {
         const next = new Set(prev)
         next.delete(bookId)
         return next
       })
-      queryClient.invalidateQueries({ queryKey: ['hardcoverSeries', id] })
+
+      queryClient.setQueryData<HardcoverSeriesDetail>(['hardcoverSeries', id], (old) => {
+        if (!old) return old
+        return {
+          ...old,
+          books: old.books.map((b) => 
+            b.id === bookId 
+              ? { 
+                  ...b, 
+                  inLibrary: true, 
+                  libraryBook: { 
+                    id: response.bookId, 
+                    hardcoverId: bookId,
+                    title: b.title,
+                    coverUrl: b.coverUrl || '',
+                    rating: b.rating,
+                    description: b.description || '',
+                    pageCount: b.pageCount || 0,
+                    status: 'missing',
+                    monitored: true,
+                    hasEbook: b.hasEbook,
+                    hasAudiobook: b.hasAudiobook,
+                    isbn: b.isbn || ''
+                  } as unknown as Book
+                } 
+              : b
+          )
+        }
+      })
+
+      invalidateAllBookQueries(queryClient)
     },
-    onError: (_, bookId) => {
+    onError: (error: Error, bookId) => {
       setAddingBooks(prev => {
         const next = new Set(prev)
         next.delete(bookId)
         return next
       })
+      if (error.message.includes('409') || error.message.includes('Conflict') || error.message.includes('already in library')) {
+        invalidateAllBookQueries(queryClient)
+      }
     },
   })
 
@@ -202,35 +231,6 @@ export function HardcoverSeriesPage() {
         <div className="max-w-6xl mx-auto px-6 py-8">
           <h2 className="text-xl font-semibold mb-4">Books in Series</h2>
 
-          {series.physicalOnlyCount > 0 && (
-            <div className="bg-card/30 border border-border rounded-lg p-3 flex items-center justify-between mb-4">
-              <div className="flex items-center gap-3 text-muted-foreground">
-                <BookMarked className="w-4 h-4 text-amber-500" />
-                <span className="text-sm">
-                  {series.physicalOnlyCount} {series.physicalOnlyCount === 1 ? 'book has' : 'books have'} physical editions only
-                </span>
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setShowPhysical(!showPhysical)}
-                className="text-muted-foreground hover:text-foreground"
-              >
-                {showPhysical ? (
-                  <>
-                    <EyeOff className="w-4 h-4 mr-2" />
-                    Hide Physical-Only
-                  </>
-                ) : (
-                  <>
-                    <Eye className="w-4 h-4 mr-2" />
-                    Show Physical-Only
-                  </>
-                )}
-              </Button>
-            </div>
-          )}
-          
           {/* Sort/Filter Toolbar */}
           <BookSortFilter
             state={sortFilterState}
@@ -283,20 +283,6 @@ export function HardcoverSeriesPage() {
                 className="text-primary hover:underline text-sm mt-2"
               >
                 Clear filters
-              </button>
-            </div>
-          ) : !showPhysical && series.physicalOnlyCount > 0 ? (
-            <div className="text-center py-12 border border-dashed border-border rounded-lg">
-              <BookMarked className="h-12 w-12 text-amber-500/50 mx-auto mb-4" />
-              <p className="text-muted-foreground">No books with digital editions found</p>
-              <p className="text-muted-foreground/70 text-sm mt-1">
-                {series.physicalOnlyCount} {series.physicalOnlyCount === 1 ? 'book' : 'books'} with physical editions only
-              </p>
-              <button 
-                onClick={() => setShowPhysical(true)}
-                className="text-primary hover:underline text-sm mt-3"
-              >
-                Show physical-only books
               </button>
             </div>
           ) : (

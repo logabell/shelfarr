@@ -45,7 +45,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { getBook, searchIndexers, updateBook, triggerDownload, deleteBook } from '@/api/client'
+import { FormatAvailability } from '@/components/ui/format-availability'
+import { getBook, searchIndexers, updateBook, triggerDownload, deleteBook, invalidateAllBookQueries } from '@/api/client'
 import type { IndexerSearchResult } from '@/types'
 
 // Sort options
@@ -204,7 +205,7 @@ export function BookDetailPage() {
   const deleteMutation = useMutation({
     mutationFn: () => deleteBook(Number(id)),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['library'] })
+      invalidateAllBookQueries(queryClient)
       navigate('/')
     },
   })
@@ -393,20 +394,12 @@ export function BookDetailPage() {
                   )}
                 </div>
 
-                {/* Format Badges */}
-                <div className="flex gap-2 mt-4">
-                  {book.hasEbook && (
-                    <Badge variant="secondary">
-                      <Book className="h-3 w-3 mr-1" />
-                      Ebook
-                    </Badge>
-                  )}
-                  {book.hasAudiobook && (
-                    <Badge variant="secondary">
-                      <Headphones className="h-3 w-3 mr-1" />
-                      Audiobook
-                    </Badge>
-                  )}
+                {/* Format Availability */}
+                <div className="flex items-center gap-3 mt-4">
+                  <FormatAvailability
+                    hasEbook={book.hasEbook}
+                    hasAudiobook={book.hasAudiobook}
+                  />
                   <Badge
                     variant="outline"
                     className={`${statusColors[book.status]} bg-opacity-20`}

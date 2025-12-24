@@ -1,8 +1,9 @@
 package api
 
 import (
+	"fmt"
+	"log"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/labstack/echo/v4"
@@ -160,8 +161,6 @@ func (s *Server) getHardcoverAuthor(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Author ID is required"})
 	}
 
-	showPhysical := c.QueryParam("showPhysical") == "true"
-
 	client, err := s.getHardcoverClient()
 	if err != nil {
 		return err
@@ -173,13 +172,22 @@ func (s *Server) getHardcoverAuthor(c echo.Context) error {
 	}
 
 	languages := s.GetPreferredLanguages()
-	result, err := client.GetBooksByAuthor(id, languages, showPhysical)
+	result, err := client.GetBooksByAuthor(id, languages)
 	if err != nil {
 		result = &hardcover.FilteredBooksResult{}
 	}
 
 	var authorCount int64
 	s.db.Model(&db.Author{}).Where("hardcover_id = ?", author.ID).Count(&authorCount)
+
+	// Debug: log how many books have series info
+	booksWithSeries := 0
+	for _, b := range result.Books {
+		if b.SeriesID != "" {
+			booksWithSeries++
+		}
+	}
+	log.Printf("[DEBUG] getHardcoverAuthor: Author '%s' has %d books, %d with series info", author.Name, len(result.Books), booksWithSeries)
 
 	bookResponses := make([]HardcoverBookResponse, len(result.Books))
 	for i, book := range result.Books {
@@ -192,6 +200,15 @@ func (s *Server) getHardcoverAuthor(c echo.Context) error {
 		if book.ReleaseDate != nil {
 			releaseDate = book.ReleaseDate.Format("2006-01-02")
 			releaseYear = book.ReleaseDate.Year()
+		}
+
+		// Debug: log series info for books with series
+		if book.SeriesID != "" {
+			seriesIdx := "nil"
+			if book.SeriesIndex != nil {
+				seriesIdx = fmt.Sprintf("%.1f", *book.SeriesIndex)
+			}
+			log.Printf("[DEBUG] getHardcoverAuthor: Book '%s' - Series: %s (#%s)", book.Title, book.SeriesName, seriesIdx)
 		}
 
 		resp := HardcoverBookResponse{
@@ -243,15 +260,13 @@ func (s *Server) getHardcoverSeries(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Series ID is required"})
 	}
 
-	showPhysical := c.QueryParam("showPhysical") == "true"
-
 	client, err := s.getHardcoverClient()
 	if err != nil {
 		return err
 	}
 
 	languages := s.GetPreferredLanguages()
-	result, err := client.GetSeries(id, languages, showPhysical)
+	result, err := client.GetSeries(id, languages)
 	if err != nil {
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "Failed to fetch series: " + err.Error()})
 	}
@@ -321,18 +336,41 @@ func (s *Server) addHardcoverBook(c echo.Context) error {
 	}
 
 	var req struct {
-		Monitored bool   `json:"monitored"`
-		MediaType string `json:"mediaType"` // ebook, audiobook, both
+		Monitored     bool   `json:"monitored"`
+		MediaType     string `json:"mediaType"`
+		ForceAuthorID uint   `json:"forceAuthorId"`
+		ForceSeriesID uint   `json:"forceSeriesId"`
 	}
 	if err := c.Bind(&req); err != nil {
 		req.Monitored = true
 		req.MediaType = "both"
 	}
 
-	// Check if already exists
 	var existing db.Book
-	if err := s.db.Where("hardcover_id = ?", id).First(&existing).Error; err == nil {
-		return c.JSON(http.StatusConflict, map[string]string{"error": "Book already in library", "bookId": strconv.FormatUint(uint64(existing.ID), 10)})
+	if err := s.db.Unscoped().Where("hardcover_id = ?", id).First(&existing).Error; err == nil {
+		if existing.DeletedAt.Valid {
+			if err := s.db.Unscoped().Model(&existing).Updates(map[string]interface{}{
+				"deleted_at": nil,
+				"status":     db.StatusMissing,
+				"monitored":  req.Monitored,
+			}).Error; err != nil {
+				log.Printf("[ERROR] addHardcoverBook: failed to restore book: %v", err)
+				return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to restore book"})
+			}
+			log.Printf("[DEBUG] addHardcoverBook: restored soft-deleted book '%s' (ID: %d)", existing.Title, existing.ID)
+			return c.JSON(http.StatusCreated, map[string]interface{}{
+				"message": "Book restored to library",
+				"bookId":  existing.ID,
+			})
+		}
+		return c.JSON(http.StatusConflict, map[string]interface{}{
+			"error":       "Book already in library",
+			"bookId":      existing.ID,
+			"hardcoverId": existing.HardcoverID,
+			"status":      existing.Status,
+			"authorId":    existing.AuthorID,
+			"seriesId":    existing.SeriesID,
+		})
 	}
 
 	client, err := s.getHardcoverClient()
@@ -345,11 +383,17 @@ func (s *Server) addHardcoverBook(c echo.Context) error {
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "Failed to fetch book: " + err.Error()})
 	}
 
-	// Create or get author
-	var author db.Author
-	if book.AuthorID != "" {
+	var authorID uint
+	if req.ForceAuthorID > 0 {
+		var forcedAuthor db.Author
+		if err := s.db.First(&forcedAuthor, req.ForceAuthorID).Error; err == nil {
+			authorID = forcedAuthor.ID
+			log.Printf("[DEBUG] addHardcoverBook: using forced author ID %d for book '%s'", authorID, book.Title)
+		}
+	}
+	if authorID == 0 && book.AuthorID != "" {
+		var author db.Author
 		if err := s.db.Where("hardcover_id = ?", book.AuthorID).First(&author).Error; err != nil {
-			// Create author
 			author = db.Author{
 				HardcoverID: book.AuthorID,
 				Name:        book.AuthorName,
@@ -357,14 +401,20 @@ func (s *Server) addHardcoverBook(c echo.Context) error {
 			}
 			s.db.Create(&author)
 		}
+		authorID = author.ID
 	}
 
-	// Create or get series
 	var seriesID *uint
-	if book.SeriesID != "" {
+	if req.ForceSeriesID > 0 {
+		var forcedSeries db.Series
+		if err := s.db.First(&forcedSeries, req.ForceSeriesID).Error; err == nil {
+			seriesID = &forcedSeries.ID
+			log.Printf("[DEBUG] addHardcoverBook: using forced series ID %d for book '%s'", *seriesID, book.Title)
+		}
+	}
+	if seriesID == nil && book.SeriesID != "" {
 		var series db.Series
 		if err := s.db.Where("hardcover_id = ?", book.SeriesID).First(&series).Error; err != nil {
-			// Create series
 			series = db.Series{
 				HardcoverID: book.SeriesID,
 				Name:        book.SeriesName,
@@ -374,7 +424,6 @@ func (s *Server) addHardcoverBook(c echo.Context) error {
 		seriesID = &series.ID
 	}
 
-	// Create book
 	newBook := db.Book{
 		HardcoverID: book.ID,
 		Title:       book.Title,
@@ -386,7 +435,7 @@ func (s *Server) addHardcoverBook(c echo.Context) error {
 		Rating:      book.Rating,
 		ReleaseDate: book.ReleaseDate,
 		PageCount:   book.PageCount,
-		AuthorID:    author.ID,
+		AuthorID:    authorID,
 		SeriesID:    seriesID,
 		SeriesIndex: book.SeriesIndex,
 		Status:      db.StatusMissing,

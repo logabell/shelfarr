@@ -6,7 +6,7 @@ import { LibraryGrid } from '@/components/library/LibraryGrid'
 import { LibraryStats } from '@/components/library/LibraryStats'
 import { LibraryFilters } from '@/components/library/LibraryFilters'
 import { LibraryToolbar } from '@/components/library/LibraryToolbar'
-import { getLibrary, getLibraryStats, bulkUpdateBooks, bulkDeleteBooks } from '@/api/client'
+import { getLibrary, getLibraryStats, bulkUpdateBooks, bulkDeleteBooks, invalidateAllBookQueries } from '@/api/client'
 import { Button } from '@/components/ui/button'
 import { CheckSquare } from 'lucide-react'
 import type { Book } from '@/types'
@@ -54,8 +54,7 @@ export function LibraryPage() {
     mutationFn: ({ bookIds, deleteFiles }: { bookIds: number[], deleteFiles: boolean }) =>
       bulkDeleteBooks(bookIds, deleteFiles),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['library'] })
-      queryClient.invalidateQueries({ queryKey: ['library-stats'] })
+      invalidateAllBookQueries(queryClient)
       setSelectedBooks(new Set())
       setSelectionMode(false)
     },

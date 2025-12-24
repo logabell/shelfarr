@@ -29,7 +29,9 @@ import {
   ListIcon,
   Filter,
   X,
-  ChevronRight
+  ChevronRight,
+  CheckCircle2,
+  AlertCircle
 } from 'lucide-react'
 import type { 
   SearchResult, 
@@ -54,10 +56,23 @@ export function SearchPage() {
   const [yearRange, setYearRange] = useState<[number, number]>([1900, new Date().getFullYear()])
   const [minRating, setMinRating] = useState(0)
   
-  // Book detail modal state
   const [selectedBookId, setSelectedBookId] = useState<string | null>(null)
+  const [recentlyAddedAuthors, setRecentlyAddedAuthors] = useState<Set<string>>(new Set())
+  const [notifications, setNotifications] = useState<Array<{ id: string; type: 'success' | 'error'; message: string }>>([])
   
   const queryClient = useQueryClient()
+  
+  const addNotification = (type: 'success' | 'error', message: string) => {
+    const id = Math.random().toString(36).substring(7)
+    setNotifications(prev => [...prev, { id, type, message }])
+    setTimeout(() => {
+      setNotifications(prev => prev.filter(n => n.id !== id))
+    }, 3000)
+  }
+  
+  const removeNotification = (notificationId: string) => {
+    setNotifications(prev => prev.filter(n => n.id !== notificationId))
+  }
 
   // Unified search query
   const { data: unifiedResults, isLoading: isLoadingAll, error: errorAll } = useQuery({
@@ -120,9 +135,17 @@ export function SearchPage() {
 
   const addAuthorMutation = useMutation({
     mutationFn: (hardcoverId: string) => addAuthor(hardcoverId, true, false),
-    onSuccess: () => {
+    onSuccess: (_, hardcoverId) => {
+      setRecentlyAddedAuthors(prev => new Set(prev).add(hardcoverId))
       queryClient.invalidateQueries({ queryKey: ['authors'] })
       queryClient.invalidateQueries({ queryKey: ['search'] })
+      addNotification('success', 'Author added to library')
+    },
+    onError: (error: Error) => {
+      const message = error.message.includes('409') || error.message.includes('Conflict')
+        ? 'Already following this author'
+        : error.message || 'Failed to add author'
+      addNotification('error', message)
     },
   })
 
@@ -171,6 +194,34 @@ export function SearchPage() {
   return (
     <div className="flex flex-col h-full">
       <Topbar title="Search" />
+
+      {notifications.length > 0 && (
+        <div className="fixed top-20 right-4 z-50 flex flex-col gap-2">
+          {notifications.map(notification => (
+            <div
+              key={notification.id}
+              className={`flex items-center gap-3 px-4 py-3 rounded-lg shadow-lg ${
+                notification.type === 'success'
+                  ? 'bg-green-500/90 text-white'
+                  : 'bg-red-500/90 text-white'
+              }`}
+            >
+              {notification.type === 'success' ? (
+                <CheckCircle2 className="h-5 w-5" />
+              ) : (
+                <AlertCircle className="h-5 w-5" />
+              )}
+              <span className="text-sm font-medium">{notification.message}</span>
+              <button
+                onClick={() => removeNotification(notification.id)}
+                className="ml-2 hover:opacity-70"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       
       <div className="flex-1 overflow-auto p-6 space-y-6">
         {/* Search Form */}
@@ -356,6 +407,7 @@ export function SearchPage() {
                           onAdd={handleAddAuthor}
                           isAdding={addAuthorMutation.isPending}
                           onClick={handleAuthorClick}
+                          recentlyAdded={recentlyAddedAuthors.has(result.id)}
                         />
                       ))}
                     </div>
@@ -451,6 +503,7 @@ export function SearchPage() {
                         onAdd={handleAddAuthor}
                         isAdding={addAuthorMutation.isPending}
                         onClick={handleAuthorClick}
+                        recentlyAdded={recentlyAddedAuthors.has(result.id)}
                       />
                     ))}
                   </div>
@@ -602,18 +655,21 @@ function BookResultCard({
   )
 }
 
-// Author Result Card Component
 function AuthorResultCard({ 
   result, 
   onAdd, 
   isAdding,
-  onClick
+  onClick,
+  recentlyAdded = false
 }: { 
   result: AuthorSearchResult
   onAdd: (result: AuthorSearchResult) => void
   isAdding: boolean
   onClick?: (result: AuthorSearchResult) => void
+  recentlyAdded?: boolean
 }) {
+  const isFollowing = result.inLibrary || recentlyAdded
+
   return (
     <div 
       className="flex gap-4 p-4 rounded-lg bg-card border border-border hover:border-primary/50 transition-colors cursor-pointer"
@@ -638,8 +694,8 @@ function AuthorResultCard({
             <p className="text-sm text-muted-foreground">{result.booksCount} books</p>
           </div>
           
-          {result.inLibrary ? (
-            <Badge variant="secondary" className="flex items-center gap-1 shrink-0">
+          {isFollowing ? (
+            <Badge variant="secondary" className="flex items-center gap-1 shrink-0 bg-green-600/20 text-green-400 border-green-600">
               <Check className="h-3 w-3" />
               Following
             </Badge>

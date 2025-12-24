@@ -784,8 +784,8 @@ func (c *Client) GetAuthor(id string) (*AuthorData, error) {
 	return author, nil
 }
 
-func (c *Client) GetBooksByAuthorWithCounts(authorID string, languages []string, includePhysicalOnly bool) (*FilteredBooksResult, error) {
-	return c.GetBooksByAuthor(authorID, languages, includePhysicalOnly)
+func (c *Client) GetBooksByAuthorWithCounts(authorID string, languages []string) (*FilteredBooksResult, error) {
+	return c.GetBooksByAuthor(authorID, languages)
 }
 
 type FilteredSeriesResult struct {
@@ -796,7 +796,7 @@ type FilteredSeriesResult struct {
 	PhysicalOnlyCount int
 }
 
-func (c *Client) GetSeries(seriesID string, languages []string, includePhysicalOnly bool) (*FilteredSeriesResult, error) {
+func (c *Client) GetSeries(seriesID string, languages []string) (*FilteredSeriesResult, error) {
 	idInt, _ := strconv.Atoi(seriesID)
 	gqlQuery := `
 		query GetSeries($seriesId: Int!) {
@@ -949,20 +949,17 @@ func (c *Client) GetSeries(seriesID string, languages []string, includePhysicalO
 
 		if hasDigital {
 			filteredResult.DigitalCount++
-			filteredResult.Books = append(filteredResult.Books, book)
 		} else {
 			filteredResult.PhysicalOnlyCount++
-			if includePhysicalOnly {
-				filteredResult.Books = append(filteredResult.Books, book)
-			}
 		}
+		filteredResult.Books = append(filteredResult.Books, book)
 	}
 
 	seriesData.BooksCount = len(filteredResult.Books)
 	return filteredResult, nil
 }
 
-func (c *Client) GetBooksByAuthor(authorID string, languages []string, includePhysicalOnly bool) (*FilteredBooksResult, error) {
+func (c *Client) GetBooksByAuthor(authorID string, languages []string) (*FilteredBooksResult, error) {
 	idInt, _ := strconv.Atoi(authorID)
 	gqlQuery := `
 		query GetBooksByAuthor($authorId: Int!) {
@@ -1093,13 +1090,10 @@ func (c *Client) GetBooksByAuthor(authorID string, languages []string, includePh
 
 		if hasDigital {
 			filteredResult.DigitalCount++
-			filteredResult.Books = append(filteredResult.Books, book)
 		} else {
 			filteredResult.PhysicalOnlyCount++
-			if includePhysicalOnly {
-				filteredResult.Books = append(filteredResult.Books, book)
-			}
 		}
+		filteredResult.Books = append(filteredResult.Books, book)
 	}
 
 	return filteredResult, nil
@@ -1261,7 +1255,7 @@ func (c *Client) Test() error {
 	return nil
 }
 
-func (c *Client) GetListBooks(listID string, includePhysicalOnly bool) (*FilteredBooksResult, error) {
+func (c *Client) GetListBooks(listID string) (*FilteredBooksResult, error) {
 	idInt, _ := strconv.Atoi(listID)
 	gqlQuery := `
 		query GetListBooks($listId: Int!) {
@@ -1377,13 +1371,10 @@ func (c *Client) GetListBooks(listID string, includePhysicalOnly bool) (*Filtere
 
 		if hasDigital {
 			filteredResult.DigitalCount++
-			filteredResult.Books = append(filteredResult.Books, book)
 		} else {
 			filteredResult.PhysicalOnlyCount++
-			if includePhysicalOnly {
-				filteredResult.Books = append(filteredResult.Books, book)
-			}
 		}
+		filteredResult.Books = append(filteredResult.Books, book)
 	}
 	return filteredResult, nil
 }

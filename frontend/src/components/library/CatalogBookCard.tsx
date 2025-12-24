@@ -9,13 +9,13 @@ import {
   Clock,
   EyeOff,
   Star,
-  Headphones,
   Layers,
   CircleDashed,
   Library,
   Trash2
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { FormatAvailability } from '@/components/ui/format-availability'
 import { cn } from '@/lib/utils'
 import type { Book, BookStatus } from '@/types'
 
@@ -95,7 +95,7 @@ export function CatalogBookCard({
   seriesName,
   authorName,
   hasAudiobook,
-  hasEbook: _hasEbook,
+  hasEbook,
   editionCount,
   inLibrary,
   libraryBook,
@@ -104,16 +104,12 @@ export function CatalogBookCard({
   onDelete,
   isDeleting = false,
 }: CatalogBookCardProps) {
-  // Note: hasEbook is available but not displayed in card to reduce visual clutter
-  void _hasEbook;
-  
   // Determine status - check if unreleased based on release year
   const isUnreleased = releaseYear && releaseYear > new Date().getFullYear()
   const displayStatus: BookStatus | 'not_in_library' = inLibrary 
     ? (libraryBook?.status || 'missing')
     : (isUnreleased ? 'unreleased' : 'not_in_library')
   
-  // Format badges component to reuse in both branches
   const FormatBadges = () => (
     <div className="flex items-center gap-1">
       {compilation && (
@@ -122,11 +118,13 @@ export function CatalogBookCard({
           <span className="text-[10px] text-white font-medium">Collection</span>
         </div>
       )}
-      {hasAudiobook && (
-        <div className="bg-purple-500/80 rounded p-0.5" title="Audiobook available">
-          <Headphones className="w-3 h-3 text-white" />
-        </div>
-      )}
+      <div className="bg-black/60 rounded px-1 py-0.5">
+        <FormatAvailability
+          hasEbook={hasEbook}
+          hasAudiobook={hasAudiobook}
+          compact
+        />
+      </div>
       {editionCount && editionCount > 1 && (
         <div className="bg-sky-500/80 rounded px-1 py-0.5 flex items-center gap-0.5" title={`${editionCount} editions`}>
           <Layers className="w-3 h-3 text-white" />
@@ -168,11 +166,9 @@ export function CatalogBookCard({
           <div className={cn('absolute top-2 right-2 w-3 h-3 rounded-full', getStatusColor(displayStatus))} />
           
           {/* Format Badges */}
-          {(compilation || hasAudiobook || (editionCount && editionCount > 1)) && (
-            <div className="absolute bottom-2 left-2">
-              <FormatBadges />
-            </div>
-          )}
+          <div className="absolute bottom-2 left-2">
+            <FormatBadges />
+          </div>
         </Link>
 
         {/* Add Button - positioned at bottom right */}
@@ -264,11 +260,9 @@ export function CatalogBookCard({
         <div className={cn('absolute top-2 right-2 w-3 h-3 rounded-full', getStatusColor(status))} />
 
         {/* Format Badges */}
-        {(compilation || hasAudiobook || (editionCount && editionCount > 1)) && (
-          <div className="absolute bottom-2 left-2">
-            <FormatBadges />
-          </div>
-        )}
+        <div className="absolute bottom-2 left-2">
+          <FormatBadges />
+        </div>
 
         {/* Monitor Badge */}
         {monitored === false && (

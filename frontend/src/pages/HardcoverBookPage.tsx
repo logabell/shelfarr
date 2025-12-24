@@ -13,13 +13,14 @@ import {
   Check,
   Library,
   Hash,
-  Headphones,
-  Layers
+  Layers,
+  Trash2
 } from 'lucide-react'
 import { Topbar } from '@/components/layout/Topbar'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { getHardcoverBook, addHardcoverBook } from '@/api/client'
+import { FormatAvailability } from '@/components/ui/format-availability'
+import { getHardcoverBook, addHardcoverBook, deleteBook, invalidateAllBookQueries } from '@/api/client'
 
 export function HardcoverBookPage() {
   const { id } = useParams<{ id: string }>()
@@ -37,12 +38,23 @@ export function HardcoverBookPage() {
     mutationFn: () => addHardcoverBook(id!, { monitored: true }),
     onSuccess: (result) => {
       setIsAdding(false)
-      queryClient.invalidateQueries({ queryKey: ['hardcoverBook', id] })
+      invalidateAllBookQueries(queryClient)
       // Navigate to the library book page
       navigate(`/books/${result.bookId}`)
     },
-    onError: () => {
+    onError: (error: Error) => {
       setIsAdding(false)
+      if (error.message.includes('409') || error.message.includes('Conflict') || error.message.includes('already in library')) {
+        invalidateAllBookQueries(queryClient)
+      }
+    },
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: (bookId: number) => deleteBook(bookId),
+    onSuccess: () => {
+      invalidateAllBookQueries(queryClient)
+      queryClient.invalidateQueries({ queryKey: ['hardcoverBook', id] })
     },
   })
 
@@ -128,13 +140,29 @@ export function HardcoverBookPage() {
                     )}
                   </div>
 
-                  {/* Add to Library Button */}
+                  {/* Add/Delete Button */}
                   <div>
                     {book.inLibrary ? (
-                      <Badge variant="secondary" className="flex items-center gap-1 text-sm px-3 py-1.5">
-                        <Check className="h-4 w-4" />
-                        In Library
-                      </Badge>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="secondary" className="flex items-center gap-1 text-sm px-3 py-1.5">
+                          <Check className="h-4 w-4" />
+                          In Library
+                        </Badge>
+                        {book.libraryBook?.id && (
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => deleteMutation.mutate(book.libraryBook!.id)}
+                            disabled={deleteMutation.isPending}
+                          >
+                            {deleteMutation.isPending ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-4 w-4" />
+                            )}
+                          </Button>
+                        )}
+                      </div>
                     ) : (
                       <Button
                         size="lg"
@@ -194,33 +222,23 @@ export function HardcoverBookPage() {
                 </div>
 
                 {/* Format Availability */}
-                {(book.hasAudiobook || book.editionCount && book.editionCount > 1) && (
-                  <div className="flex flex-wrap items-center gap-2 mt-4">
-                    {book.hasAudiobook && (
-                      <Badge variant="secondary" className="flex items-center gap-1">
-                        <Headphones className="h-3 w-3" />
-                        Audiobook
-                        {book.audioDuration && book.audioDuration > 0 && (
-                          <span className="text-muted-foreground ml-1">
-                            ({Math.floor(book.audioDuration / 3600)}h {Math.floor((book.audioDuration % 3600) / 60)}m)
-                          </span>
-                        )}
-                      </Badge>
-                    )}
-                    {book.hasEbook && (
-                      <Badge variant="secondary" className="flex items-center gap-1">
-                        <Book className="h-3 w-3" />
-                        Ebook
-                      </Badge>
-                    )}
-                    {book.editionCount && book.editionCount > 1 && (
-                      <Badge variant="outline" className="flex items-center gap-1">
-                        <Layers className="h-3 w-3" />
-                        {book.editionCount} editions
-                      </Badge>
-                    )}
-                  </div>
-                )}
+                <div className="flex flex-wrap items-center gap-3 mt-4">
+                  <FormatAvailability
+                    hasEbook={book.hasEbook}
+                    hasAudiobook={book.hasAudiobook}
+                  />
+                  {book.hasAudiobook && book.audioDuration && book.audioDuration > 0 && (
+                    <span className="text-sm text-muted-foreground">
+                      ({Math.floor(book.audioDuration / 3600)}h {Math.floor((book.audioDuration % 3600) / 60)}m)
+                    </span>
+                  )}
+                  {book.editionCount && book.editionCount > 1 && (
+                    <Badge variant="outline" className="flex items-center gap-1">
+                      <Layers className="h-3 w-3" />
+                      {book.editionCount} editions
+                    </Badge>
+                  )}
+                </div>
 
                 {/* Series Info */}
                 {book.seriesName && (

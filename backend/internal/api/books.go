@@ -1,6 +1,7 @@
 package api
 
 import (
+	"log"
 	"net/http"
 	"strconv"
 
@@ -73,13 +74,24 @@ func (s *Server) addBook(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "hardcoverId is required"})
 	}
 
-	// Check if book already exists
 	var existing db.Book
-	if err := s.db.Where("hardcover_id = ?", req.HardcoverID).First(&existing).Error; err == nil {
+	if err := s.db.Unscoped().Where("hardcover_id = ?", req.HardcoverID).First(&existing).Error; err == nil {
+		if existing.DeletedAt.Valid {
+			if err := s.db.Unscoped().Model(&existing).Updates(map[string]interface{}{
+				"deleted_at": nil,
+				"status":     db.StatusMissing,
+				"monitored":  req.Monitored,
+			}).Error; err != nil {
+				log.Printf("[ERROR] addBook: failed to restore book: %v", err)
+				return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to restore book"})
+			}
+			s.db.Preload("Author").Preload("Series").First(&existing, existing.ID)
+			log.Printf("[DEBUG] addBook: restored soft-deleted book '%s' (ID: %d)", existing.Title, existing.ID)
+			return c.JSON(http.StatusCreated, bookToResponse(existing))
+		}
 		return c.JSON(http.StatusConflict, map[string]string{"error": "Book already exists"})
 	}
 
-	// Fetch book data from Hardcover.app
 	client := hardcover.NewClient(s.config.HardcoverAPIURL)
 	bookData, err := client.GetBook(req.HardcoverID)
 	if err != nil {
@@ -184,6 +196,15 @@ func (s *Server) updateBook(c echo.Context) error {
 	return c.JSON(http.StatusOK, bookToResponse(book))
 }
 
+// DeleteBookResponse contains metadata for cache invalidation
+type DeleteBookResponse struct {
+	Message     string `json:"message"`
+	BookID      uint   `json:"bookId"`
+	HardcoverID string `json:"hardcoverId"`
+	AuthorID    uint   `json:"authorId,omitempty"`
+	SeriesID    *uint  `json:"seriesId,omitempty"`
+}
+
 // deleteBook removes a book from the library
 func (s *Server) deleteBook(c echo.Context) error {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
@@ -196,6 +217,15 @@ func (s *Server) deleteBook(c echo.Context) error {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "Book not found"})
 	}
 
+	// Capture metadata before deletion for cache invalidation
+	response := DeleteBookResponse{
+		Message:     "Book deleted successfully",
+		BookID:      book.ID,
+		HardcoverID: book.HardcoverID,
+		AuthorID:    book.AuthorID,
+		SeriesID:    book.SeriesID,
+	}
+
 	// Soft delete media files (move to recycle bin)
 	s.db.Where("book_id = ?", id).Delete(&db.MediaFile{})
 
@@ -204,7 +234,7 @@ func (s *Server) deleteBook(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to delete book"})
 	}
 
-	return c.NoContent(http.StatusNoContent)
+	return c.JSON(http.StatusOK, response)
 }
 
 // BulkUpdateRequest represents a request to update multiple books

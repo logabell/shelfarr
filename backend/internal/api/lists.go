@@ -140,7 +140,7 @@ func syncHardcoverList(gdb *gorm.DB, client *hardcover.Client, list *db.Hardcove
 	// This would call the Hardcover API to fetch list contents
 	// For now, we'll use a placeholder implementation
 
-	result, err := client.GetListBooks(list.HardcoverID, false)
+	result, err := client.GetListBooks(list.HardcoverID)
 	if err != nil {
 		return 0, err
 	}
@@ -151,7 +151,7 @@ func syncHardcoverList(gdb *gorm.DB, client *hardcover.Client, list *db.Hardcove
 		// Check if book already exists
 		var existingBook db.Book
 		result := gdb.Where("hardcover_id = ?", hcBook.ID).First(&existingBook)
-		
+
 		if result.Error == nil {
 			// Book exists, skip
 			continue
@@ -243,4 +243,3 @@ func (ls *ListSyncService) SyncAllLists() error {
 
 	return nil
 }
-

@@ -1,4 +1,5 @@
 import axios from 'axios'
+import type { QueryClient } from '@tanstack/react-query'
 import type { 
   Book, 
   LibraryResponse, 
@@ -75,9 +76,39 @@ export const updateBook = async (id: number, updates: { monitored?: boolean; sta
   return data
 }
 
-export const deleteBook = async (id: number): Promise<void> => {
-  await api.delete(`/books/${id}`)
+
+export const deleteBook = async (id: number): Promise<{
+  message: string;
+  bookId: number;
+  hardcoverId: string;
+  authorId?: number;
+  seriesId?: number | null;
+}> => {
+  const { data } = await api.delete(`/books/${id}`)
+  return data
 }
+
+export function invalidateAllBookQueries(queryClient: QueryClient) {
+  // Invalidate all library-related queries
+  queryClient.invalidateQueries({ queryKey: ['library'] });
+  queryClient.invalidateQueries({ queryKey: ['library-stats'] });
+  queryClient.invalidateQueries({ queryKey: ['libraryStats'] });
+  
+  // Invalidate all author-related queries
+  queryClient.invalidateQueries({ queryKey: ['authors'] });
+  queryClient.invalidateQueries({ queryKey: ['author'] });
+  queryClient.invalidateQueries({ queryKey: ['hardcover-author'] });
+  queryClient.invalidateQueries({ queryKey: ['hardcoverAuthor'] });
+  
+  // Invalidate all series-related queries
+  queryClient.invalidateQueries({ queryKey: ['series'] });
+  queryClient.invalidateQueries({ queryKey: ['hardcover-series'] });
+  queryClient.invalidateQueries({ queryKey: ['hardcoverSeries'] });
+  
+  // Invalidate hardcover preview queries
+  queryClient.invalidateQueries({ queryKey: ['hardcoverBook'] });
+}
+
 
 // Bulk book operations
 export const bulkUpdateBooks = async (
@@ -241,17 +272,25 @@ export const getHardcoverBook = async (id: string): Promise<HardcoverBookDetail>
   return data
 }
 
-export const getHardcoverAuthor = async (id: string, showPhysical: boolean = false): Promise<HardcoverAuthorDetail> => {
-  const { data } = await api.get(`/hardcover/author/${id}`, { params: { showPhysical } })
+export const getHardcoverAuthor = async (id: string): Promise<HardcoverAuthorDetail> => {
+  const { data } = await api.get(`/hardcover/author/${id}`)
   return data
 }
 
-export const getHardcoverSeries = async (id: string, showPhysical: boolean = false): Promise<HardcoverSeriesDetail> => {
-  const { data } = await api.get(`/hardcover/series/${id}`, { params: { showPhysical } })
+export const getHardcoverSeries = async (id: string): Promise<HardcoverSeriesDetail> => {
+  const { data } = await api.get(`/hardcover/series/${id}`)
   return data
 }
 
-export const addHardcoverBook = async (id: string, options?: { monitored?: boolean; mediaType?: string }): Promise<{ message: string; bookId: number }> => {
+export const addHardcoverBook = async (
+  id: string, 
+  options?: { 
+    monitored?: boolean; 
+    mediaType?: string;
+    forceAuthorId?: number;
+    forceSeriesId?: number;
+  }
+): Promise<{ message: string; bookId: number }> => {
   const { data } = await api.post(`/hardcover/book/${id}`, options)
   return data
 }

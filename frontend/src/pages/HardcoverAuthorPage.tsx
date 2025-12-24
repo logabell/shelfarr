@@ -7,22 +7,18 @@ import {
   BookOpen,
   Plus,
   Loader2,
-  Star,
   Eye,
   AlertCircle,
   CheckCircle2,
   X,
   Book as BookIcon,
-  Download,
-  EyeOff,
-  Clock,
-  Library,
-  BookMarked
+  Library
 } from 'lucide-react'
 import { Topbar } from '@/components/layout/Topbar'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { getHardcoverAuthor, addBook, addAuthor } from '@/api/client'
+import { getHardcoverAuthor, addHardcoverBook, addAuthor, deleteBook, invalidateAllBookQueries, type HardcoverAuthorDetail, type Book } from '@/api/client'
+import { CatalogBookCard } from '@/components/library/CatalogBookCard'
 import { 
   BookSortFilter, 
   sortBooks, 
@@ -33,7 +29,7 @@ import {
 
 interface Notification {
   id: string
-  type: 'success' | 'error'
+  type: 'success' | 'error' | 'info'
   message: string
 }
 
@@ -41,15 +37,15 @@ export function HardcoverAuthorPage() {
   const { id } = useParams<{ id: string }>()
   const queryClient = useQueryClient()
   const [addingBooks, setAddingBooks] = useState<Set<string>>(new Set())
+  const [deletingBooks, setDeletingBooks] = useState<Set<number>>(new Set())
   const [notifications, setNotifications] = useState<Notification[]>([])
   const [sortFilterState, setSortFilterState] = useState<SortFilterState>(
-    getDefaultSortFilterState(false) // false = not a series view
+    getDefaultSortFilterState(false)
   )
-  const [showPhysical, setShowPhysical] = useState(false)
 
   const { data: author, isLoading, error } = useQuery({
-    queryKey: ['hardcoverAuthor', id, showPhysical],
-    queryFn: () => getHardcoverAuthor(id!, showPhysical),
+    queryKey: ['hardcoverAuthor', id],
+    queryFn: () => getHardcoverAuthor(id!),
     enabled: !!id,
   })
 
@@ -58,10 +54,17 @@ export function HardcoverAuthorPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['hardcoverAuthor', id] })
       queryClient.invalidateQueries({ queryKey: ['authors'] })
+      addNotification('success', `Now following ${author?.name || 'author'}`)
+    },
+    onError: (error: Error) => {
+      const message = error.message.includes('409') || error.message.includes('Conflict')
+        ? 'Already following this author'
+        : error.message || 'Failed to follow author'
+      addNotification('error', message)
     },
   })
 
-  const addNotification = (type: 'success' | 'error', message: string) => {
+  const addNotification = (type: 'success' | 'error' | 'info', message: string) => {
     const notification: Notification = {
       id: Math.random().toString(36).substring(7),
       type,
@@ -78,15 +81,46 @@ export function HardcoverAuthorPage() {
   }
 
   const addBookMutation = useMutation({
-    mutationFn: (bookId: string) => addBook(bookId, true),
-    onSuccess: (result, bookId) => {
+    mutationFn: (bookId: string) => addHardcoverBook(bookId, { monitored: true }),
+    onSuccess: (response, bookId) => {
       setAddingBooks(prev => {
         const next = new Set(prev)
         next.delete(bookId)
         return next
       })
-      queryClient.invalidateQueries({ queryKey: ['hardcoverAuthor', id] })
-      addNotification('success', `Added "${result.title}" to library`)
+
+      queryClient.setQueryData<HardcoverAuthorDetail>(['hardcoverAuthor', id], (old) => {
+        if (!old) return old
+        return {
+          ...old,
+          books: old.books.map((b) => 
+            b.id === bookId 
+              ? { 
+                  ...b, 
+                  inLibrary: true, 
+                  libraryBook: { 
+                    id: response.bookId, 
+                    hardcoverId: bookId,
+                    title: b.title,
+                    coverUrl: b.coverUrl || '',
+                    rating: b.rating,
+                    description: b.description || '',
+                    pageCount: b.pageCount || 0,
+                    status: 'missing',
+                    monitored: true,
+                    hasEbook: b.hasEbook,
+                    hasAudiobook: b.hasAudiobook,
+                    isbn: b.isbn || ''
+                  } as unknown as Book
+                } 
+              : b
+          )
+        }
+      })
+
+      invalidateAllBookQueries(queryClient)
+      const bookTitle = author?.books.find(b => b.id === bookId)?.title || 'Book'
+      addNotification('success', `Added "${bookTitle}" to library`)
     },
     onError: (err: Error, bookId) => {
       setAddingBooks(prev => {
@@ -94,42 +128,81 @@ export function HardcoverAuthorPage() {
         next.delete(bookId)
         return next
       })
-      const message = err.message.includes('409') || err.message.includes('Conflict')
-        ? 'Book is already in library'
-        : 'Failed to add book'
-      addNotification('error', message)
+      if (err.message.includes('409') || err.message.includes('Conflict') || err.message.includes('already in library')) {
+        invalidateAllBookQueries(queryClient)
+        addNotification('info', 'Book is already in your library')
+      } else {
+        addNotification('error', 'Failed to add book')
+      }
     },
   })
+
+  const deleteBookMutation = useMutation({
+    mutationFn: (bookId: number) => deleteBook(bookId),
+    onSuccess: (_, bookId) => {
+      setDeletingBooks(prev => {
+        const next = new Set(prev)
+        next.delete(bookId)
+        return next
+      })
+
+      queryClient.setQueryData<HardcoverAuthorDetail>(['hardcoverAuthor', id], (old) => {
+        if (!old) return old
+        return {
+          ...old,
+          books: old.books.map((b) => 
+            b.libraryBook?.id === bookId 
+              ? { ...b, inLibrary: false, libraryBook: undefined } 
+              : b
+          )
+        }
+      })
+
+      invalidateAllBookQueries(queryClient)
+      addNotification('success', 'Book removed from library')
+    },
+    onError: (error: Error, bookId) => {
+      setDeletingBooks(prev => {
+        const next = new Set(prev)
+        next.delete(bookId)
+        return next
+      })
+      
+      if (error.message.includes('404')) {
+         queryClient.setQueryData<HardcoverAuthorDetail>(['hardcoverAuthor', id], (old) => {
+            if (!old) return old
+            return {
+              ...old,
+              books: old.books.map((b) => 
+                b.libraryBook?.id === bookId 
+                  ? { ...b, inLibrary: false, libraryBook: undefined } 
+                  : b
+              )
+            }
+          })
+          addNotification('success', 'Book removed from library')
+          return
+      }
+      addNotification('error', error.message || 'Failed to remove book')
+    },
+  })
+
+
 
   const handleAddBook = (bookId: string) => {
     setAddingBooks(prev => new Set(prev).add(bookId))
     addBookMutation.mutate(bookId)
   }
 
+  const handleDeleteBook = (bookId: number) => {
+    setDeletingBooks(prev => new Set(prev).add(bookId))
+    deleteBookMutation.mutate(bookId)
+  }
+
   const handleAddAllBooks = () => {
     if (!author?.books) return
     const booksToAdd = author.books.filter(b => !b.inLibrary)
     booksToAdd.forEach(book => handleAddBook(book.id))
-  }
-
-  const getStatusColor = (status?: string) => {
-    switch (status) {
-      case 'downloaded': return 'bg-green-500'
-      case 'downloading': return 'bg-sky-500'
-      case 'missing': return 'bg-red-500'
-      case 'unreleased': return 'bg-purple-500'
-      default: return 'bg-neutral-500'
-    }
-  }
-
-  const getStatusIcon = (status?: string) => {
-    switch (status) {
-      case 'downloaded': return <CheckCircle2 className="w-4 h-4 text-green-400" />
-      case 'downloading': return <Download className="w-4 h-4 text-sky-400" />
-      case 'missing': return <AlertCircle className="w-4 h-4 text-red-400" />
-      case 'unreleased': return <Clock className="w-4 h-4 text-purple-400" />
-      default: return <AlertCircle className="w-4 h-4 text-neutral-400" />
-    }
   }
 
   // Wrap in useMemo to prevent unnecessary re-renders
@@ -213,11 +286,15 @@ export function HardcoverAuthorPage() {
               className={`flex items-center gap-3 px-4 py-3 rounded-lg shadow-lg ${
                 notification.type === 'success'
                   ? 'bg-green-500/90 text-white'
+                  : notification.type === 'info'
+                  ? 'bg-blue-500/90 text-white'
                   : 'bg-red-500/90 text-white'
               }`}
             >
               {notification.type === 'success' ? (
                 <CheckCircle2 className="h-5 w-5" />
+              ) : notification.type === 'info' ? (
+                <AlertCircle className="h-5 w-5" />
               ) : (
                 <AlertCircle className="h-5 w-5" />
               )}
@@ -382,36 +459,6 @@ export function HardcoverAuthorPage() {
           </div>
         )}
 
-        {/* Physical-Only Books Notice */}
-        {author.physicalOnlyCount > 0 && (
-          <div className="bg-neutral-800/30 border border-neutral-700 rounded-lg p-3 flex items-center justify-between">
-            <div className="flex items-center gap-3 text-neutral-400">
-              <BookMarked className="w-4 h-4 text-amber-500" />
-              <span className="text-sm">
-                {author.physicalOnlyCount} {author.physicalOnlyCount === 1 ? 'book has' : 'books have'} physical editions only
-              </span>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setShowPhysical(!showPhysical)}
-              className="text-neutral-400 hover:text-neutral-200"
-            >
-              {showPhysical ? (
-                <>
-                  <EyeOff className="w-4 h-4 mr-2" />
-                  Hide Physical-Only
-                </>
-              ) : (
-                <>
-                  <Eye className="w-4 h-4 mr-2" />
-                  Show Physical-Only
-                </>
-              )}
-            </Button>
-          </div>
-        )}
-
         {/* Books Grid */}
         <div>
           <h2 className="text-xl font-semibold text-neutral-100 mb-4">Books</h2>
@@ -427,146 +474,27 @@ export function HardcoverAuthorPage() {
           />
 
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-            {processedBooks.map((book, index) => {
-              const isAdding = addingBooks.has(book.id)
-
-              if (!book.inLibrary) {
-                // Not in library - show preview link and add button
-                return (
-                  <div
-                    key={book.id || `book-${index}`}
-                    className="group relative bg-neutral-800/30 border-2 border-dashed border-neutral-700 rounded-xl overflow-hidden hover:border-sky-500/50 transition-colors"
-                  >
-                    {/* Cover - clickable to preview */}
-                    <Link
-                      to={`/hardcover/book/${book.id}`}
-                      className="block aspect-[2/3] relative"
-                    >
-                      {book.coverUrl ? (
-                        <img
-                          src={book.coverUrl}
-                          alt={book.title}
-                          className="w-full h-full object-cover opacity-60 group-hover:opacity-80 transition-opacity"
-                        />
-                      ) : (
-                        <div className="w-full h-full bg-gradient-to-br from-neutral-700 to-neutral-800 flex items-center justify-center">
-                          <BookIcon className="w-12 h-12 text-neutral-600" />
-                        </div>
-                      )}
-                    </Link>
-
-                    {/* Add Button */}
-                    <div className="absolute bottom-16 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <Button
-                        size="sm"
-                        onClick={(e) => {
-                          e.preventDefault()
-                          handleAddBook(book.id)
-                        }}
-                        disabled={isAdding}
-                      >
-                        {isAdding ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <>
-                            <Plus className="w-4 h-4 mr-1" />
-                            Add
-                          </>
-                        )}
-                      </Button>
-                    </div>
-
-                    {/* Info */}
-                    <div className="p-3">
-                      <Link
-                        to={`/hardcover/book/${book.id}`}
-                        className="font-medium text-neutral-400 text-sm line-clamp-2 hover:text-sky-400 transition-colors"
-                      >
-                        {book.title}
-                      </Link>
-                      <div className="flex items-center gap-2 mt-1">
-                        {book.rating > 0 && (
-                          <div className="flex items-center gap-0.5 text-xs text-neutral-500">
-                            <Star className="h-3 w-3 fill-yellow-500 text-yellow-500" />
-                            {book.rating.toFixed(1)}
-                          </div>
-                        )}
-                        {book.releaseYear && (
-                          <span className="text-xs text-neutral-500">{book.releaseYear}</span>
-                        )}
-                      </div>
-                      <p className="text-xs text-neutral-600 mt-1">Not in library</p>
-                    </div>
-                  </div>
-                )
-              }
-
-              // In library - show regular card
-              // Route to library book page if we have a library ID, otherwise to Hardcover preview
-              const bookLink = book.libraryBook?.id 
-                ? `/books/${book.libraryBook.id}` 
-                : `/hardcover/book/${book.id}`
-              
-              return (
-                <Link
-                  key={book.id || `book-${index}`}
-                  to={bookLink}
-                  className="group relative bg-neutral-800/50 rounded-xl overflow-hidden hover:ring-2 hover:ring-sky-500/50 transition-all"
-                >
-                  {/* Cover */}
-                  <div className="aspect-[2/3] relative">
-                    {book.coverUrl ? (
-                      <img
-                        src={book.coverUrl}
-                        alt={book.title}
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <div className="w-full h-full bg-gradient-to-br from-neutral-700 to-neutral-800 flex items-center justify-center">
-                        <BookIcon className="w-12 h-12 text-neutral-600" />
-                      </div>
-                    )}
-
-                    {/* Status Indicator */}
-                    <div className={`absolute top-2 right-2 w-3 h-3 rounded-full ${getStatusColor(book.libraryBook?.status)}`} />
-
-                    {/* Monitor Badge */}
-                    {book.libraryBook?.monitored === false && (
-                      <div className="absolute bottom-2 right-2 bg-neutral-900/80 rounded p-1">
-                        <EyeOff className="w-3 h-3 text-neutral-400" />
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Info */}
-                  <div className="p-3">
-                    <h3 className="font-medium text-neutral-200 text-sm line-clamp-2 group-hover:text-sky-400 transition-colors">
-                      {book.title}
-                    </h3>
-                    <div className="flex items-center gap-2 mt-2">
-                      {getStatusIcon(book.libraryBook?.status)}
-                      <span className="text-xs text-neutral-400 capitalize">{book.libraryBook?.status || 'unknown'}</span>
-                    </div>
-                    <div className="flex items-center gap-2 mt-1">
-                      {book.rating > 0 && (
-                        <div className="flex items-center gap-0.5 text-xs text-neutral-400">
-                          <Star className="h-3 w-3 fill-yellow-500 text-yellow-500" />
-                          {book.rating.toFixed(1)}
-                        </div>
-                      )}
-                      {book.releaseYear && (
-                        <span className="text-xs text-neutral-400">{book.releaseYear}</span>
-                      )}
-                    </div>
-                    {book.seriesName && (
-                      <p className="text-xs text-neutral-500 mt-1 line-clamp-1">
-                        {book.seriesName} #{book.seriesIndex}
-                      </p>
-                    )}
-                  </div>
-                </Link>
-              )
-            })}
+            {processedBooks.map((book, index) => (
+              <CatalogBookCard
+                key={book.id || `book-${index}`}
+                hardcoverId={book.id}
+                title={book.title}
+                coverUrl={book.coverUrl}
+                rating={book.rating}
+                releaseYear={book.releaseYear}
+                seriesIndex={book.seriesIndex}
+                seriesName={book.seriesName}
+                hasAudiobook={book.hasAudiobook}
+                hasEbook={book.hasEbook}
+                editionCount={book.editionCount}
+                inLibrary={book.inLibrary}
+                libraryBook={book.libraryBook}
+                onAdd={handleAddBook}
+                isAdding={addingBooks.has(book.id)}
+                onDelete={handleDeleteBook}
+                isDeleting={book.libraryBook?.id ? deletingBooks.has(book.libraryBook.id) : false}
+              />
+            ))}
           </div>
           
           {processedBooks.length === 0 && allBooks.length > 0 && (
@@ -578,22 +506,6 @@ export function HardcoverAuthorPage() {
                 className="text-sky-400 hover:text-sky-300 text-sm mt-2"
               >
                 Clear filters
-              </button>
-            </div>
-          )}
-          
-          {processedBooks.length === 0 && allBooks.length === 0 && !showPhysical && author.physicalOnlyCount > 0 && (
-            <div className="text-center py-12 border border-dashed border-neutral-700 rounded-lg mt-4">
-              <BookMarked className="w-12 h-12 mx-auto text-amber-500/50 mb-4" />
-              <p className="text-neutral-400">No books with digital editions found</p>
-              <p className="text-neutral-500 text-sm mt-1">
-                {author.physicalOnlyCount} {author.physicalOnlyCount === 1 ? 'book' : 'books'} with physical editions only
-              </p>
-              <button 
-                onClick={() => setShowPhysical(true)}
-                className="text-sky-400 hover:text-sky-300 text-sm mt-3"
-              >
-                Show physical-only books
               </button>
             </div>
           )}
