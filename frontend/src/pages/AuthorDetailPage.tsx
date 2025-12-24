@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { 
   User, 
@@ -10,10 +10,12 @@ import {
   ArrowLeft,
   Plus,
   CheckCircle2,
-  Library
+  Library,
+  Trash2
 } from 'lucide-react';
-import { getAuthor, updateAuthor, addHardcoverBook, deleteBook } from '@/api/client';
+import { getAuthor, updateAuthor, addHardcoverBook, addOpenLibraryBook, deleteBook, deleteAuthor } from '@/api/client';
 import { Button } from '@/components/ui/button';
+import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { CatalogBookCard } from '@/components/library/CatalogBookCard';
 import { 
   BookSortFilter, 
@@ -25,9 +27,11 @@ import {
 
 export default function AuthorDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [addingBooks, setAddingBooks] = useState<Set<string>>(new Set());
   const [deletingBooks, setDeletingBooks] = useState<Set<number>>(new Set());
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [sortFilterState, setSortFilterState] = useState<SortFilterState>(
     getDefaultSortFilterState(false)
   );
@@ -47,7 +51,20 @@ export default function AuthorDetailPage() {
     },
   });
 
-  const addBookMutation = useMutation({
+  const deleteAuthorMutation = useMutation({
+    mutationFn: ({ authorId, deleteFiles }: { authorId: number; deleteFiles: boolean }) => 
+      deleteAuthor(authorId, deleteFiles),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['authors'] });
+      queryClient.invalidateQueries({ queryKey: ['library'] });
+      navigate('/authors');
+    },
+    onError: (error: Error) => {
+      console.error('Failed to delete author:', error.message);
+    }
+  });
+
+  const addHardcoverBookMutation = useMutation({
     mutationFn: (hardcoverId: string) => addHardcoverBook(hardcoverId, { monitored: true }),
     onSuccess: (_, hardcoverId) => {
       setAddingBooks(prev => {
@@ -61,6 +78,27 @@ export default function AuthorDetailPage() {
       setAddingBooks(prev => {
         const next = new Set(prev);
         next.delete(hardcoverId);
+        return next;
+      });
+      console.error('Failed to add book:', error.message);
+    },
+  });
+
+  const addOpenLibraryBookMutation = useMutation({
+    mutationFn: (openLibraryWorkId: string) => addOpenLibraryBook(openLibraryWorkId, true),
+    onSuccess: (_, workId) => {
+      setAddingBooks(prev => {
+        const next = new Set(prev);
+        next.delete(workId);
+        return next;
+      });
+      queryClient.invalidateQueries({ queryKey: ['author', id] });
+      queryClient.invalidateQueries({ queryKey: ['library'] });
+    },
+    onError: (error: Error, workId) => {
+      setAddingBooks(prev => {
+        const next = new Set(prev);
+        next.delete(workId);
         return next;
       });
       console.error('Failed to add book:', error.message);
@@ -88,9 +126,13 @@ export default function AuthorDetailPage() {
     },
   });
 
-  const handleAddBook = (hardcoverId: string) => {
-    setAddingBooks(prev => new Set(prev).add(hardcoverId));
-    addBookMutation.mutate(hardcoverId);
+  const handleAddBook = (bookId: string, source: 'hardcover' | 'openlibrary') => {
+    setAddingBooks(prev => new Set(prev).add(bookId));
+    if (source === 'hardcover') {
+      addHardcoverBookMutation.mutate(bookId);
+    } else {
+      addOpenLibraryBookMutation.mutate(bookId);
+    }
   };
 
   const handleDeleteBook = (bookId: number) => {
@@ -98,11 +140,21 @@ export default function AuthorDetailPage() {
     deleteBookMutation.mutate(bookId);
   };
 
+  const handleDeleteAuthor = (deleteFiles: boolean) => {
+    if (author) {
+      deleteAuthorMutation.mutate({ authorId: author.id, deleteFiles });
+    }
+  };
+
   const handleAddAllMissing = () => {
     if (!author?.books) return;
-    const missingBooks = author.books.filter(b => !b.inLibrary && b.hardcoverId);
+    const missingBooks = author.books.filter(b => !b.inLibrary && (b.hardcoverId || b.openLibraryWorkId));
     missingBooks.forEach(book => {
-      handleAddBook(book.hardcoverId);
+      if (book.openLibraryWorkId) {
+        handleAddBook(book.openLibraryWorkId, 'openlibrary');
+      } else if (book.hardcoverId) {
+        handleAddBook(book.hardcoverId, 'hardcover');
+      }
     });
   };
 
@@ -186,6 +238,15 @@ export default function AuthorDetailPage() {
 
   return (
     <div className="space-y-6 p-6">
+      <DeleteConfirmDialog 
+        isOpen={isDeleteDialogOpen}
+        onClose={() => setIsDeleteDialogOpen(false)}
+        onConfirm={handleDeleteAuthor}
+        title={`Delete ${author.name}?`}
+        description="This will remove the author and all their books from your library."
+        isDeleting={deleteAuthorMutation.isPending}
+      />
+
       {/* Back Link */}
       <Link
         to="/authors"
@@ -258,6 +319,16 @@ export default function AuthorDetailPage() {
                     Add All Missing ({missingFromLibrary})
                   </Button>
                 )}
+
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => setIsDeleteDialogOpen(true)}
+                  disabled={deleteAuthorMutation.isPending}
+                >
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  Delete
+                </Button>
               </div>
             </div>
 
@@ -351,7 +422,7 @@ export default function AuthorDetailPage() {
             <BookIcon className="w-16 h-16 mx-auto text-neutral-600 mb-4" />
             <h3 className="text-lg font-medium text-neutral-300 mb-2">No Books Found</h3>
             <p className="text-neutral-500">
-              Unable to fetch books for this author. Check your Hardcover API configuration.
+              No books found for this author in Open Library.
             </p>
           </div>
         ) : (
@@ -370,8 +441,9 @@ export default function AuthorDetailPage() {
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
                 {processedBooks.map((bookEntry, index) => (
                   <CatalogBookCard
-                    key={bookEntry.hardcoverId || `book-${index}`}
+                    key={bookEntry.hardcoverId || bookEntry.openLibraryWorkId || `book-${index}`}
                     hardcoverId={bookEntry.hardcoverId}
+                    openLibraryWorkId={bookEntry.openLibraryWorkId}
                     title={bookEntry.title}
                     coverUrl={bookEntry.coverUrl || bookEntry.book?.coverUrl}
                     rating={bookEntry.rating || bookEntry.book?.rating}
@@ -385,7 +457,7 @@ export default function AuthorDetailPage() {
                     onAdd={handleAddBook}
                     onDelete={handleDeleteBook}
                     isDeleting={bookEntry.book?.id ? deletingBooks.has(bookEntry.book.id) : false}
-                    isAdding={addingBooks.has(bookEntry.hardcoverId)}
+                    isAdding={addingBooks.has(bookEntry.hardcoverId || bookEntry.openLibraryWorkId || '')}
                   />
                 ))}
               </div>

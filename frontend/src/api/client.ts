@@ -19,7 +19,8 @@ import type {
   User,
   ReadProgress,
   QualityProfile,
-  AuthorWithBooks
+  AuthorWithBooks,
+  OpenLibrarySearchResponse
 } from '@/types'
 
 // Re-export types for use in pages
@@ -70,6 +71,11 @@ export const addBook = async (hardcoverId: string, monitored: boolean = true): P
   return data
 }
 
+export const addOpenLibraryBook = async (openLibraryWorkId: string, monitored: boolean = true): Promise<Book> => {
+  const { data } = await api.post('/books', { openLibraryWorkId, monitored })
+  return data
+}
+
 export const updateBook = async (id: number, updates: { monitored?: boolean; status?: string }): Promise<Book> => {
   const { data } = await api.put(`/books/${id}`, updates)
   return data
@@ -109,8 +115,24 @@ export const getAuthor = async (id: number): Promise<AuthorDetail> => {
   return data
 }
 
-export const addAuthor = async (hardcoverId: string, monitored: boolean = false, addAllBooks: boolean = false): Promise<Author> => {
-  const { data } = await api.post('/authors', { hardcoverId, monitored, addAllBooks })
+export const addAuthor = async (
+  idOrOptions: string | { hardcoverId?: string; openLibraryId?: string },
+  monitored: boolean = false,
+  addAllBooks: boolean = false
+): Promise<Author> => {
+  const payload = typeof idOrOptions === 'string'
+    ? { hardcoverId: idOrOptions, monitored, addAllBooks }
+    : { ...idOrOptions, monitored, addAllBooks }
+  const { data } = await api.post('/authors', payload)
+  return data
+}
+
+export const addOpenLibraryAuthor = async (
+  openLibraryId: string,
+  monitored: boolean = false,
+  addAllBooks: boolean = false
+): Promise<Author> => {
+  const { data } = await api.post('/authors', { openLibraryId, monitored, addAllBooks })
   return data
 }
 
@@ -119,11 +141,15 @@ export const updateAuthor = async (id: number, updates: { monitored: boolean }):
   return data
 }
 
-export const deleteAuthor = async (id: number): Promise<void> => {
-  await api.delete(`/authors/${id}`)
+export const deleteAuthor = async (id: number, deleteFiles: boolean = false): Promise<void> => {
+  await api.delete(`/authors/${id}`, { params: { deleteFiles } })
 }
 
 // Series endpoints
+export const deleteSeries = async (id: number, deleteFiles: boolean = false): Promise<void> => {
+  await api.delete(`/series/${id}`, { params: { deleteFiles } })
+}
+
 export const getSeries = async (): Promise<Series[]> => {
   const { data } = await api.get('/series')
   return data
@@ -178,6 +204,49 @@ export const searchHardcoverAll = async (query: string): Promise<UnifiedSearchRe
 
 export const testHardcoverConnection = async (): Promise<{ message: string }> => {
   const { data } = await api.post('/search/hardcover/test')
+  return data
+}
+
+export const searchOpenLibrary = async (query: string, limit?: number, type: 'book' | 'author' = 'book'): Promise<OpenLibrarySearchResponse> => {
+  const { data } = await api.get('/search/openlibrary', { params: { q: query, limit, type } })
+  return data
+}
+
+export const testOpenLibraryConnection = async (): Promise<{ message: string }> => {
+  const { data } = await api.post('/search/openlibrary/test')
+  return data
+}
+
+export const testGoogleBooksConnection = async (): Promise<{
+  message: string
+  quotaUsed: number
+  quotaRemaining: number
+}> => {
+  const { data } = await api.post('/search/googlebooks/test')
+  return data
+}
+
+export const getGoogleBooksQuota = async (): Promise<{
+  configured: boolean
+  quotaUsed: number
+  quotaLimit: number
+  remaining: number
+}> => {
+  const { data } = await api.get('/search/googlebooks/quota')
+  return data
+}
+
+export const checkEbookStatus = async (isbn: string): Promise<{
+  isbn: string
+  checked: boolean
+  isEbook?: boolean | null
+  hasEpub?: boolean | null
+  hasPdf?: boolean | null
+  buyLink?: string
+  googleVolumeId?: string
+  quotaExhausted: boolean
+}> => {
+  const { data } = await api.get('/search/ebook-status', { params: { isbn } })
   return data
 }
 
@@ -791,18 +860,21 @@ export const apiClient = {
   getBooks,
   getBook,
   addBook,
+  addOpenLibraryBook,
   updateBook,
   deleteBook,
   // Authors
   getAuthors,
   getAuthor,
   addAuthor,
+  addOpenLibraryAuthor,
   updateAuthor,
   deleteAuthor,
   // Series
   getSeries,
   getSeriesDetail,
   addSeriesBooks,
+  deleteSeries,
   // Search
   searchHardcover,
   searchHardcoverAuthors,
@@ -810,6 +882,11 @@ export const apiClient = {
   searchHardcoverLists,
   searchHardcoverAll,
   testHardcoverConnection,
+  searchOpenLibrary,
+  testOpenLibraryConnection,
+  testGoogleBooksConnection,
+  getGoogleBooksQuota,
+  checkEbookStatus,
   searchIndexers,
   // Hardcover detail
   getHardcoverBook,

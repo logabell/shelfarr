@@ -28,13 +28,16 @@ const (
 // Author represents a book author
 type Author struct {
 	gorm.Model
-	HardcoverID string `gorm:"uniqueIndex"`
-	Name        string `gorm:"index"`
-	SortName    string
-	Biography   string
-	ImageURL    string
-	Monitored   bool `gorm:"default:false"`
-	Books       []Book
+	HardcoverID   string `gorm:"uniqueIndex"`
+	OpenLibraryID string `gorm:"index"`
+	Name          string `gorm:"index"`
+	SortName      string
+	Biography     string
+	ImageURL      string
+	BirthDate     *time.Time
+	DeathDate     *time.Time
+	Monitored     bool `gorm:"default:false"`
+	Books         []Book
 
 	// Cached metadata from Hardcover
 	TotalBooksCount int        `gorm:"default:0"` // Total books by author from Hardcover
@@ -47,6 +50,7 @@ type Series struct {
 	HardcoverID string `gorm:"uniqueIndex"`
 	Name        string `gorm:"index"`
 	Description string
+	IsCompleted bool `gorm:"default:false"`
 	Books       []Book
 
 	// Cached metadata from Hardcover
@@ -57,16 +61,21 @@ type Series struct {
 // Book represents a book entry in the library
 type Book struct {
 	gorm.Model
-	HardcoverID string `gorm:"uniqueIndex"`
-	Title       string `gorm:"index"`
-	SortTitle   string
-	ISBN        string `gorm:"index"`
-	ISBN13      string `gorm:"index"`
-	Description string
-	CoverURL    string
-	Rating      float32
-	ReleaseDate *time.Time
-	PageCount   int
+	HardcoverID          string `gorm:"uniqueIndex"`
+	OpenLibraryWorkID    string `gorm:"index"`
+	OpenLibraryEditionID string `gorm:"index"`
+	GoogleVolumeID       string `gorm:"index"`
+	Title                string `gorm:"index"`
+	SortTitle            string
+	ISBN                 string `gorm:"index"`
+	ISBN13               string `gorm:"index"`
+	Description          string
+	CoverURL             string
+	Rating               float32
+	ReleaseDate          *time.Time
+	PageCount            int
+	Language             string
+	Genres               string `gorm:"type:text"`
 
 	// Relationships
 	AuthorID    uint
@@ -74,6 +83,16 @@ type Book struct {
 	SeriesID    *uint
 	Series      *Series
 	SeriesIndex *float32
+
+	IsEbook            *bool
+	IsAudiobook        *bool
+	HasEpub            *bool
+	HasPdf             *bool
+	BuyLink            string
+	AudioDuration      int
+	EbookCheckedAt     *time.Time
+	AudiobookCheckedAt *time.Time
+	MetadataUpdatedAt  *time.Time
 
 	// Status tracking
 	Status    BookStatus `gorm:"default:'missing'"`

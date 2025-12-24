@@ -893,6 +893,7 @@ func (c *Client) GetSeries(seriesID string, languages []string, includePhysicalO
 				Language:      langInfo,
 				ISBN10:        ed.ISBN10,
 				ISBN13:        ed.ISBN13,
+				ASIN:          ed.Asin,
 			})
 		}
 
@@ -1038,6 +1039,7 @@ func (c *Client) GetBooksByAuthor(authorID string, languages []string, includePh
 				Language:      langInfo,
 				ISBN10:        ed.ISBN10,
 				ISBN13:        ed.ISBN13,
+				ASIN:          ed.Asin,
 			})
 		}
 
@@ -1122,6 +1124,7 @@ type EditionFormatInfo struct {
 	Language      *EditionLanguageInfo
 	ISBN10        string
 	ISBN13        string
+	ASIN          string
 	AudioSeconds  int
 }
 
@@ -1154,14 +1157,25 @@ func countEditionsByFormat(editions []EditionFormatInfo) (digital int, physical 
 
 func getEditionFormats(editions []EditionFormatInfo) (hasEbook bool, hasAudiobook bool) {
 	for _, ed := range editions {
-		if ed.ReadingFormat == nil {
-			continue
+		// Check explicit reading_format first
+		if ed.ReadingFormat != nil {
+			if ed.ReadingFormat.Format == FormatEbook {
+				hasEbook = true
+			} else if ed.ReadingFormat.Format == FormatAudiobook {
+				hasAudiobook = true
+			}
 		}
-		if ed.ReadingFormat.Format == FormatEbook {
+
+		// Fallback: ASIN indicates Kindle/Amazon ebook
+		if !hasEbook && ed.ASIN != "" {
 			hasEbook = true
-		} else if ed.ReadingFormat.Format == FormatAudiobook {
+		}
+
+		// Fallback: AudioSeconds > 0 indicates audiobook
+		if !hasAudiobook && ed.AudioSeconds > 0 {
 			hasAudiobook = true
 		}
+
 		if hasEbook && hasAudiobook {
 			return
 		}
@@ -1271,7 +1285,7 @@ func (c *Client) GetListBooks(listID string, includePhysicalOnly bool) (*Filtere
 						id, title, description, compilation, image { url }, release_date, pages, rating
 						contributions { author { id, name } }
 						book_series { series { id, name }, position }
-						editions { isbn_10, isbn_13, reading_format { format }, language { code2 language } }
+						editions { isbn_10, isbn_13, asin, reading_format { format }, language { code2 language } }
 					}
 				}
 			}
@@ -1309,6 +1323,7 @@ func (c *Client) GetListBooks(listID string, includePhysicalOnly bool) (*Filtere
 					Editions []struct {
 						ISBN10        string `json:"isbn_10"`
 						ISBN13        string `json:"isbn_13"`
+						Asin          string `json:"asin"`
 						ReadingFormat *struct {
 							Format string `json:"format"`
 						} `json:"reading_format"`
@@ -1339,6 +1354,7 @@ func (c *Client) GetListBooks(listID string, includePhysicalOnly bool) (*Filtere
 				ReadingFormat: formatInfo,
 				ISBN10:        ed.ISBN10,
 				ISBN13:        ed.ISBN13,
+				ASIN:          ed.Asin,
 			})
 		}
 

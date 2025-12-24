@@ -1,18 +1,22 @@
 package api
 
 import (
+	"log"
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/shelfarr/shelfarr/internal/db"
 	"github.com/shelfarr/shelfarr/internal/hardcover"
+	"github.com/shelfarr/shelfarr/internal/openlibrary"
 )
 
-// AddBookRequest represents the request body for adding a book
 type AddBookRequest struct {
-	HardcoverID string `json:"hardcoverId" validate:"required"`
-	Monitored   bool   `json:"monitored"`
+	HardcoverID       string `json:"hardcoverId"`
+	OpenLibraryWorkID string `json:"openLibraryWorkId"`
+	Monitored         bool   `json:"monitored"`
 }
 
 // UpdateBookRequest represents the request body for updating a book
@@ -62,35 +66,38 @@ func (s *Server) getBook(c echo.Context) error {
 	return c.JSON(http.StatusOK, bookToResponse(book))
 }
 
-// addBook adds a new book from Hardcover.app
 func (s *Server) addBook(c echo.Context) error {
 	var req AddBookRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
 	}
 
-	if req.HardcoverID == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "hardcoverId is required"})
+	if req.HardcoverID == "" && req.OpenLibraryWorkID == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Either hardcoverId or openLibraryWorkId is required"})
 	}
 
-	// Check if book already exists
+	if req.OpenLibraryWorkID != "" {
+		return s.addBookFromOpenLibrary(c, req)
+	}
+
+	return s.addBookFromHardcover(c, req)
+}
+
+func (s *Server) addBookFromHardcover(c echo.Context, req AddBookRequest) error {
 	var existing db.Book
 	if err := s.db.Where("hardcover_id = ?", req.HardcoverID).First(&existing).Error; err == nil {
 		return c.JSON(http.StatusConflict, map[string]string{"error": "Book already exists"})
 	}
 
-	// Fetch book data from Hardcover.app
 	client := hardcover.NewClient(s.config.HardcoverAPIURL)
 	bookData, err := client.GetBook(req.HardcoverID)
 	if err != nil {
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "Failed to fetch book from Hardcover: " + err.Error()})
 	}
 
-	// Create or find author
 	var author db.Author
 	if bookData.AuthorID != "" {
 		if err := s.db.Where("hardcover_id = ?", bookData.AuthorID).First(&author).Error; err != nil {
-			// Create new author
 			authorData, err := client.GetAuthor(bookData.AuthorID)
 			if err == nil {
 				author = db.Author{
@@ -106,12 +113,10 @@ func (s *Server) addBook(c echo.Context) error {
 		}
 	}
 
-	// Create or find series
 	var series *db.Series
 	if bookData.SeriesID != "" {
 		var seriesRecord db.Series
 		if err := s.db.Where("hardcover_id = ?", bookData.SeriesID).First(&seriesRecord).Error; err != nil {
-			// Note: We'd need to fetch series data from Hardcover
 			seriesRecord = db.Series{
 				HardcoverID: bookData.SeriesID,
 				Name:        bookData.SeriesName,
@@ -121,7 +126,6 @@ func (s *Server) addBook(c echo.Context) error {
 		series = &seriesRecord
 	}
 
-	// Create the book
 	book := db.Book{
 		HardcoverID: bookData.ID,
 		Title:       bookData.Title,
@@ -147,8 +151,132 @@ func (s *Server) addBook(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to create book"})
 	}
 
-	// Reload with associations
 	s.db.Preload("Author").Preload("Series").First(&book, book.ID)
+
+	return c.JSON(http.StatusCreated, bookToResponse(book))
+}
+
+func (s *Server) addBookFromOpenLibrary(c echo.Context, req AddBookRequest) error {
+	workID := req.OpenLibraryWorkID
+	if strings.HasPrefix(workID, "/works/") {
+		workID = strings.TrimPrefix(workID, "/works/")
+	}
+
+	var existing db.Book
+	if err := s.db.Where("open_library_work_id = ?", workID).First(&existing).Error; err == nil {
+		return c.JSON(http.StatusConflict, map[string]string{"error": "Book already exists"})
+	}
+
+	olClient := openlibrary.NewClient()
+	work, err := olClient.GetWork(workID)
+	if err != nil {
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "Failed to fetch work from Open Library: " + err.Error()})
+	}
+
+	log.Printf("[INFO] addBookFromOpenLibrary: Adding work '%s' (OL: %s)", work.Title, workID)
+
+	var author db.Author
+	if len(work.Authors) > 0 && work.Authors[0].Author.Key != "" {
+		authorOLID := openlibrary.ExtractOLID(work.Authors[0].Author.Key)
+
+		if err := s.db.Where("open_library_id = ?", authorOLID).First(&author).Error; err != nil {
+			olAuthor, err := olClient.GetAuthor(authorOLID)
+			if err == nil {
+				bio := openlibrary.ExtractDescription(olAuthor.Bio)
+				var photoURL string
+				if len(olAuthor.Photos) > 0 && olAuthor.Photos[0] > 0 {
+					photoURL = openlibrary.GetAuthorPhotoURL(olAuthor.Photos[0], "M")
+				}
+
+				author = db.Author{
+					OpenLibraryID: authorOLID,
+					Name:          olAuthor.Name,
+					SortName:      olAuthor.PersonalName,
+					Biography:     bio,
+					ImageURL:      photoURL,
+					Monitored:     false,
+				}
+				s.db.Create(&author)
+				log.Printf("[INFO] addBookFromOpenLibrary: Created author '%s' (OL: %s)", author.Name, authorOLID)
+			}
+		}
+	}
+
+	var coverURL string
+	if len(work.Covers) > 0 && work.Covers[0] > 0 {
+		coverURL = openlibrary.GetCoverURL(work.Covers[0], "L")
+	}
+
+	var releaseDate *time.Time
+	if work.FirstPublishDate != "" {
+		if t, err := time.Parse("2006", work.FirstPublishDate); err == nil {
+			releaseDate = &t
+		} else if t, err := time.Parse("January 2, 2006", work.FirstPublishDate); err == nil {
+			releaseDate = &t
+		} else if t, err := time.Parse("2006-01-02", work.FirstPublishDate); err == nil {
+			releaseDate = &t
+		}
+	}
+
+	description := openlibrary.ExtractDescription(work.Description)
+
+	var isbn, isbn13 string
+	editions, err := olClient.GetWorkEditions(workID, 10, 0)
+	if err == nil && len(editions.Entries) > 0 {
+		for _, ed := range editions.Entries {
+			if len(ed.ISBN13) > 0 && isbn13 == "" {
+				isbn13 = ed.ISBN13[0]
+			}
+			if len(ed.ISBN10) > 0 && isbn == "" {
+				isbn = ed.ISBN10[0]
+			}
+			if isbn != "" && isbn13 != "" {
+				break
+			}
+		}
+	}
+
+	book := db.Book{
+		OpenLibraryWorkID: workID,
+		Title:             work.Title,
+		SortTitle:         work.Title,
+		Description:       description,
+		CoverURL:          coverURL,
+		ReleaseDate:       releaseDate,
+		ISBN:              isbn,
+		ISBN13:            isbn13,
+		AuthorID:          author.ID,
+		Status:            db.StatusMissing,
+		Monitored:         req.Monitored,
+	}
+
+	if isbn13 != "" || isbn != "" {
+		gbClient := s.getGoogleBooksClient()
+		if gbClient != nil {
+			checkISBN := isbn13
+			if checkISBN == "" {
+				checkISBN = isbn
+			}
+			gbInfo, err := gbClient.GetVolumeByISBN(checkISBN)
+			if err == nil {
+				book.GoogleVolumeID = gbInfo.VolumeID
+				book.IsEbook = &gbInfo.IsEbook
+				book.HasEpub = &gbInfo.HasEpub
+				book.HasPdf = &gbInfo.HasPdf
+				book.BuyLink = gbInfo.BuyLink
+				now := time.Now()
+				book.EbookCheckedAt = &now
+				log.Printf("[INFO] addBookFromOpenLibrary: Google Books enrichment - isEbook=%v, hasEpub=%v", gbInfo.IsEbook, gbInfo.HasEpub)
+			}
+		}
+	}
+
+	if err := s.db.Create(&book).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to create book"})
+	}
+
+	s.db.Preload("Author").Preload("Series").First(&book, book.ID)
+	log.Printf("[INFO] addBookFromOpenLibrary: Successfully added book '%s' (ID: %d)", book.Title, book.ID)
 
 	return c.JSON(http.StatusCreated, bookToResponse(book))
 }

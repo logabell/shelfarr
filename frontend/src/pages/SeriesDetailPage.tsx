@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { 
   Library, 
@@ -8,10 +8,12 @@ import {
   ArrowLeft,
   Plus,
   Loader2,
-  ListPlus
+  ListPlus,
+  Trash2
 } from 'lucide-react';
-import { getSeriesDetail, addHardcoverBook, deleteBook } from '@/api/client';
+import { getSeriesDetail, addHardcoverBook, deleteBook, deleteSeries } from '@/api/client';
 import { Button } from '@/components/ui/button';
+import { DeleteConfirmDialog } from '@/components/ui/delete-confirm-dialog';
 import { CatalogBookCard } from '@/components/library/CatalogBookCard';
 import { AddSeriesModal } from '@/components/series/AddSeriesModal';
 import { 
@@ -24,9 +26,11 @@ import {
 
 export default function SeriesDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [addingBooks, setAddingBooks] = useState<Set<string>>(new Set());
   const [deletingBooks, setDeletingBooks] = useState<Set<number>>(new Set());
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isAddSeriesModalOpen, setIsAddSeriesModalOpen] = useState(false);
   const [sortFilterState, setSortFilterState] = useState<SortFilterState>(
     getDefaultSortFilterState(true)
@@ -58,6 +62,19 @@ export default function SeriesDetailPage() {
     },
   });
 
+  const deleteSeriesMutation = useMutation({
+    mutationFn: ({ seriesId, deleteFiles }: { seriesId: number; deleteFiles: boolean }) => 
+      deleteSeries(seriesId, deleteFiles),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['series'] });
+      queryClient.invalidateQueries({ queryKey: ['library'] });
+      navigate('/series');
+    },
+    onError: (error: Error) => {
+      console.error('Failed to delete series:', error.message);
+    }
+  });
+
   const deleteBookMutation = useMutation({
     mutationFn: (bookId: number) => deleteBook(bookId),
     onSuccess: (_, bookId) => {
@@ -87,6 +104,12 @@ export default function SeriesDetailPage() {
   const handleDeleteBook = (bookId: number) => {
     setDeletingBooks(prev => new Set(prev).add(bookId));
     deleteBookMutation.mutate(bookId);
+  };
+
+  const handleDeleteSeries = (deleteFiles: boolean) => {
+    if (series) {
+      deleteSeriesMutation.mutate({ seriesId: series.id, deleteFiles });
+    }
   };
 
   const handleAddAllMissing = () => {
@@ -144,6 +167,15 @@ export default function SeriesDetailPage() {
 
   return (
     <div className="space-y-6 p-6">
+      <DeleteConfirmDialog
+        isOpen={isDeleteDialogOpen}
+        onClose={() => setIsDeleteDialogOpen(false)}
+        onConfirm={handleDeleteSeries}
+        title={`Delete ${series.name}?`}
+        description="This will remove the series and all its books from your library."
+        isDeleting={deleteSeriesMutation.isPending}
+      />
+
       {/* Back Link */}
       <Link
         to="/series"
@@ -183,31 +215,43 @@ export default function SeriesDetailPage() {
           <div className="flex-1 min-w-0">
             <div className="flex items-center justify-between">
               <h1 className="text-2xl font-bold text-neutral-100">{series.name}</h1>
-              {missingFromLibrary > 0 && (
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    onClick={() => setIsAddSeriesModalOpen(true)}
-                    disabled={addingBooks.size > 0}
-                    size="sm"
-                  >
-                    <ListPlus className="w-4 h-4 mr-2" />
-                    Add Selected
-                  </Button>
-                  <Button
-                    onClick={handleAddAllMissing}
-                    disabled={addingBooks.size > 0}
-                    size="sm"
-                  >
-                    {addingBooks.size > 0 ? (
-                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                    ) : (
-                      <Plus className="w-4 h-4 mr-2" />
-                    )}
-                    Add All Missing ({missingFromLibrary})
-                  </Button>
-                </div>
-              )}
+              <div className="flex items-center gap-2">
+                {missingFromLibrary > 0 && (
+                  <>
+                    <Button
+                      variant="outline"
+                      onClick={() => setIsAddSeriesModalOpen(true)}
+                      disabled={addingBooks.size > 0}
+                      size="sm"
+                    >
+                      <ListPlus className="w-4 h-4 mr-2" />
+                      Add Selected
+                    </Button>
+                    <Button
+                      onClick={handleAddAllMissing}
+                      disabled={addingBooks.size > 0}
+                      size="sm"
+                    >
+                      {addingBooks.size > 0 ? (
+                        <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                      ) : (
+                        <Plus className="w-4 h-4 mr-2" />
+                      )}
+                      Add All Missing ({missingFromLibrary})
+                    </Button>
+                  </>
+                )}
+                
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => setIsDeleteDialogOpen(true)}
+                  disabled={deleteSeriesMutation.isPending}
+                >
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  Delete
+                </Button>
+              </div>
             </div>
             
             {/* Stats */}

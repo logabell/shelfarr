@@ -6,23 +6,27 @@ export type MediaType = 'ebook' | 'audiobook'
 export interface Author {
   id: number
   hardcoverId: string
+  openLibraryId?: string
   name: string
   sortName: string
   biography?: string
   imageUrl: string
+  birthDate?: string
+  deathDate?: string
   monitored: boolean
-  bookCount?: number        // Books in library
-  totalBooksCount?: number  // Total books from Hardcover (cached)
-  downloadedCount?: number  // Books with files
+  bookCount?: number
+  totalBooksCount?: number
+  downloadedCount?: number
 }
 
 export interface Series {
   id: number
   hardcoverId: string
   name: string
-  bookCount?: number        // Books in library
-  totalBooksCount?: number  // Total books from Hardcover (cached)
-  downloadedCount?: number  // Books with files
+  isCompleted?: boolean
+  bookCount?: number
+  totalBooksCount?: number
+  downloadedCount?: number
 }
 
 export interface MediaFile {
@@ -40,20 +44,34 @@ export interface MediaFile {
 export interface Book {
   id: number
   hardcoverId: string
+  openLibraryWorkId?: string
+  openLibraryEditionId?: string
+  googleVolumeId?: string
   title: string
   sortTitle: string
   isbn: string
+  isbn13?: string
   description: string
   coverUrl: string
   rating: number
   releaseDate?: string
   pageCount: number
+  language?: string
+  genres?: string[]
   status: BookStatus
   monitored: boolean
   author?: Author
   series?: Series
   seriesIndex?: number
   mediaFiles?: MediaFile[]
+  isEbook?: boolean | null
+  isAudiobook?: boolean | null
+  hasEpub?: boolean | null
+  hasPdf?: boolean | null
+  buyLink?: string
+  audioDuration?: number
+  ebookCheckedAt?: string
+  audiobookCheckedAt?: string
   hasEbook: boolean
   hasAudiobook: boolean
   format?: string
@@ -208,9 +226,9 @@ export interface SeriesDetail extends Series {
   missingBooks: number
 }
 
-// AuthorBookEntry represents a book by an author (may or may not be in library)
 export interface AuthorBookEntry {
-  hardcoverId: string
+  openLibraryWorkId?: string
+  hardcoverId?: string
   title: string
   coverUrl?: string
   authorName?: string
@@ -222,6 +240,10 @@ export interface AuthorBookEntry {
   compilation?: boolean
   inLibrary: boolean
   book?: Book
+  isEbook?: boolean | null
+  hasEpub?: boolean | null
+  hasPdf?: boolean | null
+  isAudiobook?: boolean | null
 }
 
 export interface AuthorDetail extends Author {
@@ -296,5 +318,63 @@ export interface HardcoverSeriesDetail {
   physicalOnlyCount: number
   inLibrary: boolean
   books: HardcoverBookResult[]
+}
+
+export interface OpenLibrarySearchResult {
+  key: string
+  title: string
+  authors?: string[]
+  authorKeys?: string[]
+  firstPublishYear?: number
+  coverUrl?: string
+  isbn?: string
+  isbn13?: string
+  language?: string
+  pageCount?: number
+  rating?: number
+  subjects?: string[]
+  hasFulltext: boolean
+  inLibrary: boolean
+  isEbook?: boolean | null
+  hasEpub?: boolean | null
+  googleBooksChecked: boolean
+}
+
+export interface OpenLibraryAuthorSearchResult {
+  key: string
+  name: string
+  birthDate?: string
+  deathDate?: string
+  topWork?: string
+  workCount?: number
+  topSubjects?: string[]
+  imageUrl?: string
+  inLibrary: boolean
+}
+
+export interface OpenLibrarySearchResponse {
+  results: OpenLibrarySearchResult[]
+  authorResults?: OpenLibraryAuthorSearchResult[]
+  total: number
+  googleQuotaUsed: number
+  googleQuotaRemaining: number
+}
+
+export interface GoogleBooksQuotaStatus {
+  configured: boolean
+  quotaUsed: number
+  quotaLimit: number
+  remaining: number
+}
+
+export interface EbookStatusResponse {
+  isbn: string
+  checked: boolean
+  isEbook?: boolean | null
+  hasEpub?: boolean | null
+  hasPdf?: boolean | null
+  buyLink?: string
+  googleVolumeId?: string
+  quotaExhausted: boolean
 }
 

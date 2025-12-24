@@ -178,6 +178,8 @@ func (s *Server) getHardcoverAuthor(c echo.Context) error {
 		result = &hardcover.FilteredBooksResult{}
 	}
 
+	result = s.enrichBooksWithGoogleBooks(result, author.Name)
+
 	var authorCount int64
 	s.db.Model(&db.Author{}).Where("hardcover_id = ?", author.ID).Count(&authorCount)
 
@@ -401,4 +403,40 @@ func (s *Server) addHardcoverBook(c echo.Context) error {
 		"message": "Book added to library",
 		"bookId":  newBook.ID,
 	})
+}
+
+func (s *Server) enrichBooksWithGoogleBooks(result *hardcover.FilteredBooksResult, authorName string) *hardcover.FilteredBooksResult {
+	gbClient := s.getGoogleBooksClient()
+	if gbClient == nil || result == nil {
+		return result
+	}
+
+	for i := range result.Books {
+		book := &result.Books[i]
+		if book.HasDigitalEdition {
+			continue
+		}
+
+		query := book.Title
+		if authorName != "" {
+			query = "intitle:" + book.Title + " inauthor:" + authorName
+		}
+
+		books, err := gbClient.SearchVolumes(query, 3)
+		if err != nil {
+			continue
+		}
+
+		for _, gbBook := range books {
+			if gbBook.IsEbook || gbBook.HasEpub {
+				book.HasDigitalEdition = true
+				book.HasEbook = true
+				result.DigitalCount++
+				result.PhysicalOnlyCount--
+				break
+			}
+		}
+	}
+
+	return result
 }

@@ -45,7 +45,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { getBook, searchIndexers, updateBook, triggerDownload, deleteBook } from '@/api/client'
+import { getBook, searchIndexers, updateBook, triggerDownload, deleteBook, checkEbookStatus } from '@/api/client'
 import type { IndexerSearchResult } from '@/types'
 
 // Sort options
@@ -114,6 +114,13 @@ export function BookDetailPage() {
     queryKey: ['book', id],
     queryFn: () => getBook(Number(id)),
     enabled: !!id,
+  })
+
+  const { data: ebookStatus, isLoading: isEbookStatusLoading } = useQuery({
+    queryKey: ['ebookStatus', book?.isbn, book?.isbn13],
+    queryFn: () => checkEbookStatus(book!.isbn || book!.isbn13!),
+    enabled: !!(book && (book.isbn || book.isbn13)),
+    retry: false
   })
 
   const { data: searchResults, refetch: refetchSearch } = useQuery({
@@ -394,7 +401,7 @@ export function BookDetailPage() {
                 </div>
 
                 {/* Format Badges */}
-                <div className="flex gap-2 mt-4">
+                <div className="flex gap-2 mt-4 items-center flex-wrap">
                   {book.hasEbook && (
                     <Badge variant="secondary">
                       <Book className="h-3 w-3 mr-1" />
@@ -413,6 +420,30 @@ export function BookDetailPage() {
                   >
                     {book.status}
                   </Badge>
+
+                  {/* Google Books Status */}
+                  {isEbookStatusLoading && (
+                    <Badge variant="outline" className="animate-pulse">
+                      <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                      Checking Google...
+                    </Badge>
+                  )}
+                  {ebookStatus?.quotaExhausted && (
+                    <span className="text-xs text-muted-foreground ml-2">
+                      Google check unavailable
+                    </span>
+                  )}
+                  {!ebookStatus?.quotaExhausted && ebookStatus?.isEbook && (
+                    <Badge variant="default" className="bg-green-600 hover:bg-green-700 border-green-600">
+                      <Check className="h-3 w-3 mr-1" />
+                      Google Books: Ebook Available
+                    </Badge>
+                  )}
+                  {!ebookStatus?.quotaExhausted && ebookStatus?.hasEpub && (
+                    <Badge variant="outline" className="border-blue-500 text-blue-500">
+                      EPUB Available
+                    </Badge>
+                  )}
                 </div>
 
                 {/* Description */}

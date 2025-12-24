@@ -9,41 +9,39 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Slider } from '@/components/ui/slider'
 import { Label } from '@/components/ui/label'
 import { 
-  searchHardcover, 
-  searchHardcoverAuthors, 
   searchHardcoverSeries, 
   searchHardcoverLists,
-  searchHardcoverAll,
-  addAuthor,
-  automaticSearch
+  searchOpenLibrary,
+  addOpenLibraryBook,
+  addOpenLibraryAuthor,
+  automaticSearch,
 } from '@/api/client'
 import { AddBookModal } from '@/components/search/AddBookModal'
 import { 
   Search, 
   Plus, 
   Check, 
-  Star, 
   BookOpen, 
   User, 
   Library, 
   ListIcon,
   Filter,
   X,
-  ChevronRight
+  Book
 } from 'lucide-react'
 import type { 
-  SearchResult, 
-  AuthorSearchResult, 
   SeriesSearchResult, 
   ListSearchResult,
-  SearchType
+  SearchType,
+  OpenLibrarySearchResult,
+  OpenLibraryAuthorSearchResult
 } from '@/types'
 
 export function SearchPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
   const initialQuery = searchParams.get('q') || ''
-  const initialType = (searchParams.get('type') as SearchType) || 'all'
+  const initialType = (searchParams.get('type') as SearchType) || 'book'
   
   const [query, setQuery] = useState(initialQuery)
   const [searchTerm, setSearchTerm] = useState(initialQuery)
@@ -59,31 +57,23 @@ export function SearchPage() {
   
   const queryClient = useQueryClient()
 
-  // Unified search query
-  const { data: unifiedResults, isLoading: isLoadingAll, error: errorAll } = useQuery({
-    queryKey: ['search', 'all', searchTerm],
-    queryFn: () => searchHardcoverAll(searchTerm),
-    enabled: searchTerm.length > 2 && searchType === 'all',
-    retry: false,
-  })
-
-  // Book search query
+  // Book search query (Open Library)
   const { data: bookResults, isLoading: isLoadingBooks, error: errorBooks } = useQuery({
     queryKey: ['search', 'book', searchTerm],
-    queryFn: () => searchHardcover(searchTerm, 'book'),
+    queryFn: () => searchOpenLibrary(searchTerm, 20, 'book'),
     enabled: searchTerm.length > 2 && searchType === 'book',
     retry: false,
   })
 
-  // Author search query
+  // Author search query (Open Library)
   const { data: authorResults, isLoading: isLoadingAuthors, error: errorAuthors } = useQuery({
     queryKey: ['search', 'author', searchTerm],
-    queryFn: () => searchHardcoverAuthors(searchTerm),
+    queryFn: () => searchOpenLibrary(searchTerm, 20, 'author'),
     enabled: searchTerm.length > 2 && searchType === 'author',
     retry: false,
   })
 
-  // Series search query
+  // Series search query (Hardcover)
   const { data: seriesResults, isLoading: isLoadingSeries, error: errorSeries } = useQuery({
     queryKey: ['search', 'series', searchTerm],
     queryFn: () => searchHardcoverSeries(searchTerm),
@@ -91,7 +81,7 @@ export function SearchPage() {
     retry: false,
   })
 
-  // List search query
+  // List search query (Hardcover)
   const { data: listResults, isLoading: isLoadingLists, error: errorLists } = useQuery({
     queryKey: ['search', 'list', searchTerm],
     queryFn: () => searchHardcoverLists(searchTerm),
@@ -99,27 +89,34 @@ export function SearchPage() {
     retry: false,
   })
 
-  const isLoading = isLoadingAll || isLoadingBooks || isLoadingAuthors || isLoadingSeries || isLoadingLists
-  const searchError = errorAll || errorBooks || errorAuthors || errorSeries || errorLists
+  const isLoading = isLoadingBooks || isLoadingAuthors || isLoadingSeries || isLoadingLists
+  const searchError = errorBooks || errorAuthors || errorSeries || errorLists
 
-  // Filter books based on current filters
   const filteredBooks = useMemo(() => {
-    const books = searchType === 'all' ? unifiedResults?.books : bookResults
+    const books = bookResults?.results
     if (!books) return []
     
     return books.filter(book => {
-      if (book.releaseYear && (book.releaseYear < yearRange[0] || book.releaseYear > yearRange[1])) {
+      if (book.firstPublishYear && (book.firstPublishYear < yearRange[0] || book.firstPublishYear > yearRange[1])) {
         return false
       }
-      if (book.rating < minRating) {
+      if (book.rating && book.rating < minRating) {
         return false
       }
       return true
     })
-  }, [searchType, unifiedResults?.books, bookResults, yearRange, minRating])
+  }, [bookResults, yearRange, minRating])
 
-  const addAuthorMutation = useMutation({
-    mutationFn: (hardcoverId: string) => addAuthor(hardcoverId, true, false),
+  const addOpenLibraryBookMutation = useMutation({
+    mutationFn: (openLibraryWorkId: string) => addOpenLibraryBook(openLibraryWorkId, true),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['library'] })
+      queryClient.invalidateQueries({ queryKey: ['search'] })
+    },
+  })
+
+  const addOpenLibraryAuthorMutation = useMutation({
+    mutationFn: (openLibraryId: string) => addOpenLibraryAuthor(openLibraryId, true, false),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['authors'] })
       queryClient.invalidateQueries({ queryKey: ['search'] })
@@ -139,26 +136,8 @@ export function SearchPage() {
     }
   }
 
-  const handleAddBook = (result: SearchResult) => {
-    // Open the AddBookModal instead of directly adding
-    setSelectedBookId(result.id)
-  }
-
-  const handleBookClick = (result: SearchResult) => {
-    // Always open the modal to show details and add options
-    setSelectedBookId(result.id)
-  }
-
-  const handleAuthorClick = (result: AuthorSearchResult) => {
-    navigate(`/hardcover/author/${result.id}`)
-  }
-
   const handleSeriesClick = (result: SeriesSearchResult) => {
     navigate(`/hardcover/series/${result.id}`)
-  }
-
-  const handleAddAuthor = (result: AuthorSearchResult) => {
-    addAuthorMutation.mutate(result.id)
   }
 
   const resetFilters = () => {
@@ -192,12 +171,8 @@ export function SearchPage() {
           </form>
 
           {/* Category Tabs */}
-          <Tabs value={searchType} onValueChange={handleTypeChange} className="w-full max-w-3xl">
-            <TabsList className="grid w-full grid-cols-5">
-              <TabsTrigger value="all" className="flex items-center gap-1.5">
-                <Search className="h-3.5 w-3.5" />
-                All
-              </TabsTrigger>
+          <Tabs value={searchType} onValueChange={handleTypeChange} className="w-full max-w-4xl">
+            <TabsList className="grid w-full grid-cols-4">
               <TabsTrigger value="book" className="flex items-center gap-1.5">
                 <BookOpen className="h-3.5 w-3.5" />
                 Books
@@ -307,129 +282,23 @@ export function SearchPage() {
           </div>
         ) : (
           <div className="space-y-8">
-            {/* Unified Results */}
-            {searchType === 'all' && unifiedResults && (
-              <>
-                {/* Books Section */}
-                {filteredBooks && filteredBooks.length > 0 && (
-                  <section>
-                    <div className="flex items-center justify-between mb-4">
-                      <h2 className="text-lg font-semibold flex items-center gap-2">
-                        <BookOpen className="h-5 w-5" />
-                        Books ({filteredBooks.length})
-                      </h2>
-                      <Button variant="ghost" size="sm" onClick={() => handleTypeChange('book')}>
-                        View All <ChevronRight className="h-4 w-4 ml-1" />
-                      </Button>
-                    </div>
-                    <div className="space-y-3">
-                      {filteredBooks.slice(0, 5).map((result) => (
-                        <BookResultCard 
-                          key={result.id} 
-                          result={result} 
-                          onAdd={handleAddBook}
-                          isAdding={false}
-                          onClick={handleBookClick}
-                        />
-                      ))}
-                    </div>
-                  </section>
-                )}
-
-                {/* Authors Section */}
-                {unifiedResults.authors && unifiedResults.authors.length > 0 && (
-                  <section>
-                    <div className="flex items-center justify-between mb-4">
-                      <h2 className="text-lg font-semibold flex items-center gap-2">
-                        <User className="h-5 w-5" />
-                        Authors ({unifiedResults.authors.length})
-                      </h2>
-                      <Button variant="ghost" size="sm" onClick={() => handleTypeChange('author')}>
-                        View All <ChevronRight className="h-4 w-4 ml-1" />
-                      </Button>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      {unifiedResults.authors.slice(0, 4).map((result) => (
-                        <AuthorResultCard 
-                          key={result.id} 
-                          result={result} 
-                          onAdd={handleAddAuthor}
-                          isAdding={addAuthorMutation.isPending}
-                          onClick={handleAuthorClick}
-                        />
-                      ))}
-                    </div>
-                  </section>
-                )}
-
-                {/* Series Section */}
-                {unifiedResults.series && unifiedResults.series.length > 0 && (
-                  <section>
-                    <div className="flex items-center justify-between mb-4">
-                      <h2 className="text-lg font-semibold flex items-center gap-2">
-                        <Library className="h-5 w-5" />
-                        Series ({unifiedResults.series.length})
-                      </h2>
-                      <Button variant="ghost" size="sm" onClick={() => handleTypeChange('series')}>
-                        View All <ChevronRight className="h-4 w-4 ml-1" />
-                      </Button>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      {unifiedResults.series.slice(0, 4).map((result) => (
-                        <SeriesResultCard key={result.id} result={result} onClick={handleSeriesClick} />
-                      ))}
-                    </div>
-                  </section>
-                )}
-
-                {/* Lists Section */}
-                {unifiedResults.lists && unifiedResults.lists.length > 0 && (
-                  <section>
-                    <div className="flex items-center justify-between mb-4">
-                      <h2 className="text-lg font-semibold flex items-center gap-2">
-                        <ListIcon className="h-5 w-5" />
-                        Lists ({unifiedResults.lists.length})
-                      </h2>
-                      <Button variant="ghost" size="sm" onClick={() => handleTypeChange('list')}>
-                        View All <ChevronRight className="h-4 w-4 ml-1" />
-                      </Button>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      {unifiedResults.lists.slice(0, 4).map((result) => (
-                        <ListResultCard key={result.id} result={result} />
-                      ))}
-                    </div>
-                  </section>
-                )}
-
-                {/* No Results */}
-                {(!filteredBooks || filteredBooks.length === 0) && 
-                 (!unifiedResults.authors || unifiedResults.authors.length === 0) && 
-                 (!unifiedResults.series || unifiedResults.series.length === 0) &&
-                 (!unifiedResults.lists || unifiedResults.lists.length === 0) && (
-                  <NoResults />
-                )}
-              </>
-            )}
-
             {/* Book Results */}
             {searchType === 'book' && (
               <>
                 {filteredBooks && filteredBooks.length > 0 ? (
                   <div className="space-y-3">
                     {filteredBooks.map((result) => (
-                      <BookResultCard 
-                        key={result.id} 
+                      <OpenLibraryResultCard 
+                        key={result.key} 
                         result={result} 
-                        onAdd={handleAddBook}
-                        isAdding={false}
-                        onClick={handleBookClick}
+                        onAdd={(workId) => addOpenLibraryBookMutation.mutate(workId)}
+                        isAdding={addOpenLibraryBookMutation.isPending}
                       />
                     ))}
                   </div>
-                ) : bookResults?.length === 0 ? (
+                ) : bookResults?.results.length === 0 ? (
                   <NoResults />
-                ) : hasActiveFilters && bookResults && bookResults.length > 0 ? (
+                ) : hasActiveFilters && bookResults && bookResults.results.length > 0 ? (
                   <div className="flex flex-col items-center justify-center py-16">
                     <Filter className="h-16 w-16 text-muted-foreground mb-4" />
                     <p className="text-lg text-muted-foreground">No results match your filters</p>
@@ -442,19 +311,18 @@ export function SearchPage() {
             {/* Author Results */}
             {searchType === 'author' && (
               <>
-                {authorResults && authorResults.length > 0 ? (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {authorResults.map((result) => (
-                      <AuthorResultCard 
-                        key={result.id} 
+                {authorResults?.authorResults && authorResults.authorResults.length > 0 ? (
+                  <div className="space-y-3">
+                    {authorResults.authorResults.map((result) => (
+                      <OpenLibraryAuthorResultCard 
+                        key={result.key} 
                         result={result} 
-                        onAdd={handleAddAuthor}
-                        isAdding={addAuthorMutation.isPending}
-                        onClick={handleAuthorClick}
+                        onAdd={(authorId) => addOpenLibraryAuthorMutation.mutate(authorId)}
+                        isAdding={addOpenLibraryAuthorMutation.isPending}
                       />
                     ))}
                   </div>
-                ) : authorResults?.length === 0 ? (
+                ) : authorResults?.authorResults?.length === 0 ? (
                   <NoResults />
                 ) : null}
               </>
@@ -489,6 +357,9 @@ export function SearchPage() {
                 ) : null}
               </>
             )}
+
+            {/* Open Library Results - Removed as it is now the default */}
+            
           </div>
         )}
       </div>
@@ -515,153 +386,6 @@ export function SearchPage() {
           // 'none' mode: just close the modal, book is added without download
         }}
       />
-    </div>
-  )
-}
-
-// Book Result Card Component
-function BookResultCard({ 
-  result, 
-  onAdd, 
-  isAdding,
-  onClick
-}: { 
-  result: SearchResult
-  onAdd: (result: SearchResult) => void
-  isAdding: boolean
-  onClick?: (result: SearchResult) => void
-}) {
-  return (
-    <div 
-      className="flex gap-4 p-4 rounded-lg bg-card border border-border hover:border-primary/50 transition-colors cursor-pointer"
-      onClick={() => onClick?.(result)}
-    >
-      {result.coverUrl ? (
-        <img
-          src={result.coverUrl}
-          alt={result.title}
-          className="w-20 h-28 object-cover rounded shadow-md"
-        />
-      ) : (
-        <div className="w-20 h-28 bg-muted rounded flex items-center justify-center">
-          <BookOpen className="h-8 w-8 text-muted-foreground" />
-        </div>
-      )}
-      
-      <div className="flex-1 min-w-0">
-        <div className="flex items-start justify-between gap-2">
-          <div>
-            <h3 className="font-medium line-clamp-1">{result.title}</h3>
-            <p className="text-sm text-muted-foreground">{result.author}</p>
-          </div>
-          
-          {result.inLibrary ? (
-            <Badge variant="secondary" className="flex items-center gap-1 shrink-0">
-              <Check className="h-3 w-3" />
-              In Library
-            </Badge>
-          ) : (
-            <Button
-              size="sm"
-              onClick={(e) => { e.stopPropagation(); onAdd(result) }}
-              disabled={isAdding}
-              className="shrink-0"
-            >
-              <Plus className="h-4 w-4 mr-1" />
-              Add
-            </Button>
-          )}
-        </div>
-        
-        <div className="flex items-center gap-3 mt-2">
-          {result.rating > 0 && (
-            <div className="flex items-center gap-1 text-sm text-muted-foreground">
-              <Star className="h-4 w-4 fill-yellow-500 text-yellow-500" />
-              {result.rating.toFixed(1)}
-            </div>
-          )}
-          {result.releaseYear && (
-            <span className="text-sm text-muted-foreground">
-              {result.releaseYear}
-            </span>
-          )}
-          {result.isbn && (
-            <span className="text-xs text-muted-foreground">
-              ISBN: {result.isbn}
-            </span>
-          )}
-        </div>
-        
-        {result.description && (
-          <p className="mt-2 text-sm text-muted-foreground line-clamp-2">
-            {result.description}
-          </p>
-        )}
-      </div>
-    </div>
-  )
-}
-
-// Author Result Card Component
-function AuthorResultCard({ 
-  result, 
-  onAdd, 
-  isAdding,
-  onClick
-}: { 
-  result: AuthorSearchResult
-  onAdd: (result: AuthorSearchResult) => void
-  isAdding: boolean
-  onClick?: (result: AuthorSearchResult) => void
-}) {
-  return (
-    <div 
-      className="flex gap-4 p-4 rounded-lg bg-card border border-border hover:border-primary/50 transition-colors cursor-pointer"
-      onClick={() => onClick?.(result)}
-    >
-      {result.imageUrl ? (
-        <img
-          src={result.imageUrl}
-          alt={result.name}
-          className="w-16 h-16 object-cover rounded-full"
-        />
-      ) : (
-        <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center">
-          <User className="h-8 w-8 text-muted-foreground" />
-        </div>
-      )}
-      
-      <div className="flex-1 min-w-0">
-        <div className="flex items-start justify-between gap-2">
-          <div>
-            <h3 className="font-medium">{result.name}</h3>
-            <p className="text-sm text-muted-foreground">{result.booksCount} books</p>
-          </div>
-          
-          {result.inLibrary ? (
-            <Badge variant="secondary" className="flex items-center gap-1 shrink-0">
-              <Check className="h-3 w-3" />
-              Following
-            </Badge>
-          ) : (
-            <Button
-              size="sm"
-              onClick={(e) => { e.stopPropagation(); onAdd(result) }}
-              disabled={isAdding}
-              className="shrink-0"
-            >
-              <Plus className="h-4 w-4 mr-1" />
-              Add
-            </Button>
-          )}
-        </div>
-        
-        {result.biography && (
-          <p className="mt-2 text-sm text-muted-foreground line-clamp-2">
-            {result.biography}
-          </p>
-        )}
-      </div>
     </div>
   )
 }
@@ -734,7 +458,191 @@ function ListResultCard({ result }: { result: ListSearchResult }) {
   )
 }
 
-// No Results Component
+function OpenLibraryResultCard({ 
+  result, 
+  onAdd,
+  isAdding 
+}: { 
+  result: OpenLibrarySearchResult 
+  onAdd: (workId: string) => void
+  isAdding: boolean
+}) {
+  return (
+    <div className="flex gap-4 p-4 rounded-lg bg-card border border-border hover:border-primary/50 transition-colors">
+      {result.coverUrl ? (
+        <img
+          src={result.coverUrl}
+          alt={result.title}
+          className="w-20 h-28 object-cover rounded shadow-md"
+        />
+      ) : (
+        <div className="w-20 h-28 bg-muted rounded flex items-center justify-center">
+          <Book className="h-8 w-8 text-muted-foreground" />
+        </div>
+      )}
+      
+      <div className="flex-1 min-w-0">
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <h3 className="font-medium line-clamp-1">{result.title}</h3>
+            {result.authors && result.authors.length > 0 && (
+              <p className="text-sm text-muted-foreground">{result.authors.join(', ')}</p>
+            )}
+          </div>
+          
+          {result.inLibrary ? (
+            <Badge variant="secondary" className="flex items-center gap-1 shrink-0">
+              <Check className="h-3 w-3" />
+              In Library
+            </Badge>
+          ) : (
+            <Button
+              size="sm"
+              onClick={() => onAdd(result.key)}
+              disabled={isAdding}
+              className="shrink-0"
+            >
+              <Plus className="h-4 w-4 mr-1" />
+              {isAdding ? 'Adding...' : 'Add'}
+            </Button>
+          )}
+        </div>
+        
+        <div className="flex items-center gap-3 mt-2 flex-wrap">
+          {result.firstPublishYear && (
+            <span className="text-sm text-muted-foreground">
+              {result.firstPublishYear}
+            </span>
+          )}
+          {result.isbn13 && (
+            <span className="text-xs text-muted-foreground">
+              ISBN: {result.isbn13}
+            </span>
+          )}
+          {result.language && (
+            <span className="text-xs text-muted-foreground uppercase">
+              {result.language}
+            </span>
+          )}
+          {result.isEbook && (
+            <Badge variant="outline" className="border-green-500 text-green-500 text-xs">
+              Ebook
+            </Badge>
+          )}
+          {result.hasEpub && (
+            <Badge variant="outline" className="border-blue-500 text-blue-500 text-xs">
+              EPUB
+            </Badge>
+          )}
+          {result.hasFulltext && (
+            <Badge variant="outline" className="text-xs">
+              Full Text
+            </Badge>
+          )}
+        </div>
+        
+        {result.subjects && result.subjects.length > 0 && (
+          <p className="mt-2 text-xs text-muted-foreground line-clamp-1">
+            {result.subjects.slice(0, 3).join(' • ')}
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function OpenLibraryAuthorResultCard({ 
+  result, 
+  onAdd,
+  isAdding 
+}: { 
+  result: OpenLibraryAuthorSearchResult 
+  onAdd: (authorId: string) => void
+  isAdding: boolean
+}) {
+  const navigate = useNavigate()
+
+  const handleClick = () => {
+    if (result.inLibrary) {
+      navigate(`/authors?search=${encodeURIComponent(result.name)}`)
+    }
+  }
+
+  return (
+    <div 
+      className={`flex gap-4 p-4 rounded-lg bg-card border border-border hover:border-primary/50 transition-colors ${result.inLibrary ? 'cursor-pointer' : ''}`}
+      onClick={result.inLibrary ? handleClick : undefined}
+    >
+      {result.imageUrl ? (
+        <img
+          src={result.imageUrl}
+          alt={result.name}
+          className="w-20 h-20 object-cover rounded-full shadow-md"
+        />
+      ) : (
+        <div className="w-20 h-20 bg-muted rounded-full flex items-center justify-center">
+          <User className="h-8 w-8 text-muted-foreground" />
+        </div>
+      )}
+      
+      <div className="flex-1 min-w-0">
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <h3 className="font-medium line-clamp-1">{result.name}</h3>
+            {result.topWork && (
+              <p className="text-sm text-muted-foreground">Known for: {result.topWork}</p>
+            )}
+          </div>
+          
+          {result.inLibrary ? (
+            <Badge variant="secondary" className="flex items-center gap-1 shrink-0">
+              <Check className="h-3 w-3" />
+              In Library
+            </Badge>
+          ) : (
+            <Button
+              size="sm"
+              onClick={(e) => {
+                e.stopPropagation()
+                onAdd(result.key)
+              }}
+              disabled={isAdding}
+              className="shrink-0"
+            >
+              <Plus className="h-4 w-4 mr-1" />
+              {isAdding ? 'Adding...' : 'Add'}
+            </Button>
+          )}
+        </div>
+        
+        <div className="flex items-center gap-3 mt-2 flex-wrap">
+          {result.workCount && (
+            <span className="text-sm text-muted-foreground">
+              {result.workCount} works
+            </span>
+          )}
+          {result.birthDate && (
+            <span className="text-xs text-muted-foreground">
+              Born: {result.birthDate}
+            </span>
+          )}
+          {result.deathDate && (
+            <span className="text-xs text-muted-foreground">
+              Died: {result.deathDate}
+            </span>
+          )}
+        </div>
+        
+        {result.topSubjects && result.topSubjects.length > 0 && (
+          <p className="mt-2 text-xs text-muted-foreground line-clamp-1">
+            {result.topSubjects.slice(0, 3).join(' • ')}
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function NoResults() {
   return (
     <div className="flex flex-col items-center justify-center py-16">

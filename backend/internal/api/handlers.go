@@ -697,13 +697,17 @@ func (s *Server) updateProgress(c echo.Context) error {
 // Settings Handlers
 // ========================
 
-// getSettings returns application settings
 func (s *Server) getSettings(c echo.Context) error {
-	// Fetch hardcover API key from database
 	var hardcoverSetting db.Setting
 	hardcoverAPIKey := ""
 	if err := s.db.Where("key = ?", "hardcover_api_key").First(&hardcoverSetting).Error; err == nil {
 		hardcoverAPIKey = hardcoverSetting.Value
+	}
+
+	var googleBooksSetting db.Setting
+	googleBooksAPIKey := ""
+	if err := s.db.Where("key = ?", "google_books_api_key").First(&googleBooksSetting).Error; err == nil {
+		googleBooksAPIKey = googleBooksSetting.Value
 	}
 
 	settings := map[string]interface{}{
@@ -720,13 +724,21 @@ func (s *Server) getSettings(c echo.Context) error {
 			"email":   "",
 		},
 		"librarySearchProviders": map[string]interface{}{
+			"openLibrary": map[string]interface{}{
+				"enabled": true,
+			},
+			"googleBooks": map[string]interface{}{
+				"enabled":    googleBooksAPIKey != "",
+				"apiKey":     googleBooksAPIKey,
+				"dailyQuota": 1000,
+			},
 			"hardcover": map[string]interface{}{
 				"enabled":    hardcoverAPIKey != "",
 				"apiKey":     hardcoverAPIKey,
 				"apiUrl":     s.config.HardcoverAPIURL,
-				"rateLimit":  60, // requests per minute
-				"maxDepth":   3,  // max query depth
-				"maxTimeout": 30, // seconds
+				"rateLimit":  60,
+				"maxDepth":   3,
+				"maxTimeout": 30,
 			},
 		},
 	}
@@ -734,21 +746,23 @@ func (s *Server) getSettings(c echo.Context) error {
 	return c.JSON(http.StatusOK, settings)
 }
 
-// updateSettings updates application settings
 func (s *Server) updateSettings(c echo.Context) error {
 	var req map[string]interface{}
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
 	}
 
-	// Handle librarySearchProviders.hardcover.apiKey
 	if providers, ok := req["librarySearchProviders"].(map[string]interface{}); ok {
 		if hardcover, ok := providers["hardcover"].(map[string]interface{}); ok {
 			if apiKey, ok := hardcover["apiKey"].(string); ok {
 				setting := db.Setting{Key: "hardcover_api_key", Value: apiKey}
-				if err := s.db.Save(&setting).Error; err != nil {
-					return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to save API key"})
-				}
+				s.db.Where("key = ?", "hardcover_api_key").Assign(setting).FirstOrCreate(&setting)
+			}
+		}
+		if googleBooks, ok := providers["googleBooks"].(map[string]interface{}); ok {
+			if apiKey, ok := googleBooks["apiKey"].(string); ok {
+				setting := db.Setting{Key: "google_books_api_key", Value: apiKey}
+				s.db.Where("key = ?", "google_books_api_key").Assign(setting).FirstOrCreate(&setting)
 			}
 		}
 	}

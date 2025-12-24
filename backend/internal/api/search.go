@@ -4,12 +4,16 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/shelfarr/shelfarr/internal/db"
+	"github.com/shelfarr/shelfarr/internal/googlebooks"
 	"github.com/shelfarr/shelfarr/internal/hardcover"
 	"github.com/shelfarr/shelfarr/internal/indexer"
+	"github.com/shelfarr/shelfarr/internal/openlibrary"
 )
 
 // SearchResult represents a search result from Hardcover.app
@@ -463,4 +467,319 @@ func calculateQualityLabel(r indexer.SearchResult) string {
 		return "Available"
 	}
 	return "Low Seeds"
+}
+
+type OpenLibrarySearchResult struct {
+	Key                string   `json:"key"`
+	Title              string   `json:"title"`
+	Authors            []string `json:"authors,omitempty"`
+	AuthorKeys         []string `json:"authorKeys,omitempty"`
+	FirstPublishYear   int      `json:"firstPublishYear,omitempty"`
+	CoverURL           string   `json:"coverUrl,omitempty"`
+	ISBN               string   `json:"isbn,omitempty"`
+	ISBN13             string   `json:"isbn13,omitempty"`
+	Language           string   `json:"language,omitempty"`
+	PageCount          int      `json:"pageCount,omitempty"`
+	Rating             float32  `json:"rating,omitempty"`
+	Subjects           []string `json:"subjects,omitempty"`
+	HasFulltext        bool     `json:"hasFulltext"`
+	InLibrary          bool     `json:"inLibrary"`
+	IsEbook            *bool    `json:"isEbook,omitempty"`
+	HasEpub            *bool    `json:"hasEpub,omitempty"`
+	GoogleBooksChecked bool     `json:"googleBooksChecked"`
+}
+
+type OpenLibraryAuthorSearchResult struct {
+	Key         string   `json:"key"`
+	Name        string   `json:"name"`
+	BirthDate   string   `json:"birthDate,omitempty"`
+	DeathDate   string   `json:"deathDate,omitempty"`
+	TopWork     string   `json:"topWork,omitempty"`
+	WorkCount   int      `json:"workCount,omitempty"`
+	TopSubjects []string `json:"topSubjects,omitempty"`
+	ImageURL    string   `json:"imageUrl,omitempty"`
+	InLibrary   bool     `json:"inLibrary"`
+}
+
+type OpenLibrarySearchResponse struct {
+	Results           []OpenLibrarySearchResult       `json:"results,omitempty"`
+	AuthorResults     []OpenLibraryAuthorSearchResult `json:"authorResults,omitempty"`
+	Total             int                             `json:"total"`
+	GoogleQuotaUsed   int                             `json:"googleQuotaUsed"`
+	GoogleQuotaRemain int                             `json:"googleQuotaRemaining"`
+}
+
+func (s *Server) searchOpenLibrary(c echo.Context) error {
+	query := c.QueryParam("q")
+	if query == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Query parameter 'q' is required"})
+	}
+
+	searchType := c.QueryParam("type")
+	if searchType == "" {
+		searchType = "book"
+	}
+
+	limitStr := c.QueryParam("limit")
+	limit := 20
+	if limitStr != "" {
+		if l, err := parseIntParam(limitStr); err == nil && l > 0 && l <= 100 {
+			limit = l
+		}
+	}
+
+	client := s.getOpenLibraryClient()
+
+	if searchType == "author" {
+		return s.searchOpenLibraryAuthors(c, client, query, limit)
+	}
+
+	return s.searchOpenLibraryBooks(c, client, query, limit)
+}
+
+func (s *Server) searchOpenLibraryAuthors(c echo.Context, client *openlibrary.Client, query string, limit int) error {
+	result, err := client.SearchAuthors(query, limit)
+	if err != nil {
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "Search failed: " + err.Error()})
+	}
+
+	var results []OpenLibraryAuthorSearchResult
+	for _, doc := range result.Docs {
+		olResult := OpenLibraryAuthorSearchResult{
+			Key:         extractOLID(doc.Key),
+			Name:        doc.Name,
+			BirthDate:   doc.BirthDate,
+			DeathDate:   doc.DeathDate,
+			TopWork:     doc.TopWork,
+			WorkCount:   doc.WorkCount,
+			TopSubjects: doc.TopSubjects,
+		}
+
+		olResult.ImageURL = openlibrary.GetAuthorPhotoURLByOLID(olResult.Key, "M")
+
+		var count int64
+		s.db.Model(&db.Author{}).Where("open_library_id = ?", olResult.Key).Count(&count)
+		olResult.InLibrary = count > 0
+
+		results = append(results, olResult)
+	}
+
+	return c.JSON(http.StatusOK, OpenLibrarySearchResponse{
+		AuthorResults:     results,
+		Total:             result.NumFound,
+		GoogleQuotaUsed:   0,
+		GoogleQuotaRemain: 0,
+	})
+}
+
+func (s *Server) searchOpenLibraryBooks(c echo.Context, client *openlibrary.Client, query string, limit int) error {
+	result, err := client.SearchBooks(query, limit, 0)
+	if err != nil {
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "Search failed: " + err.Error()})
+	}
+
+	var results []OpenLibrarySearchResult
+	for _, doc := range result.Docs {
+		olResult := OpenLibrarySearchResult{
+			Key:              extractOLID(doc.Key),
+			Title:            doc.Title,
+			Authors:          doc.AuthorName,
+			AuthorKeys:       doc.AuthorKey,
+			FirstPublishYear: doc.FirstPublishYear,
+			PageCount:        doc.NumberOfPagesMedian,
+			Rating:           float32(doc.RatingsAverage),
+			Subjects:         doc.Subject,
+			HasFulltext:      doc.HasFulltext,
+		}
+
+		if len(doc.ISBN) > 0 {
+			for _, isbn := range doc.ISBN {
+				if len(isbn) == 10 && olResult.ISBN == "" {
+					olResult.ISBN = isbn
+				} else if len(isbn) == 13 && olResult.ISBN13 == "" {
+					olResult.ISBN13 = isbn
+				}
+				if olResult.ISBN != "" && olResult.ISBN13 != "" {
+					break
+				}
+			}
+		}
+
+		if doc.CoverI > 0 {
+			olResult.CoverURL = getCoverURL(doc.CoverI, "M")
+		}
+
+		if len(doc.Language) > 0 {
+			olResult.Language = doc.Language[0]
+		}
+
+		var count int64
+		if olResult.ISBN13 != "" {
+			s.db.Model(&db.Book{}).Where("isbn13 = ?", olResult.ISBN13).Count(&count)
+		}
+		if count == 0 && olResult.ISBN != "" {
+			s.db.Model(&db.Book{}).Where("isbn = ?", olResult.ISBN).Count(&count)
+		}
+		olResult.InLibrary = count > 0
+
+		results = append(results, olResult)
+	}
+
+	gbClient := s.getGoogleBooksClient()
+	quotaUsed := 0
+	quotaRemain := 0
+	if gbClient != nil {
+		quotaUsed = gbClient.QuotaUsed()
+		quotaRemain = gbClient.QuotaRemaining()
+	}
+
+	return c.JSON(http.StatusOK, OpenLibrarySearchResponse{
+		Results:           results,
+		Total:             result.NumFound,
+		GoogleQuotaUsed:   quotaUsed,
+		GoogleQuotaRemain: quotaRemain,
+	})
+}
+
+func (s *Server) testOpenLibrary(c echo.Context) error {
+	client := s.getOpenLibraryClient()
+	if err := client.Test(); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Connection failed: " + err.Error()})
+	}
+	return c.JSON(http.StatusOK, map[string]string{"message": "Connection successful"})
+}
+
+func parseIntParam(s string) (int, error) {
+	var n int
+	_, err := time.ParseDuration("0s")
+	if err != nil {
+		return 0, err
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return 0, echo.NewHTTPError(http.StatusBadRequest, "invalid integer")
+		}
+		n = n*10 + int(c-'0')
+	}
+	return n, nil
+}
+
+func extractOLID(key string) string {
+	parts := strings.Split(key, "/")
+	if len(parts) > 0 {
+		return parts[len(parts)-1]
+	}
+	return key
+}
+
+func getCoverURL(coverID int, size string) string {
+	if size == "" {
+		size = "M"
+	}
+	return "https://covers.openlibrary.org/b/id/" + strconv.Itoa(coverID) + "-" + size + ".jpg"
+}
+
+func (s *Server) getOpenLibraryClient() *openlibrary.Client {
+	return openlibrary.NewClient()
+}
+
+func (s *Server) getGoogleBooksClient() *googlebooks.Client {
+	var setting db.Setting
+	if err := s.db.Where("key = ?", "google_books_api_key").First(&setting).Error; err != nil || setting.Value == "" {
+		return nil
+	}
+	return googlebooks.NewClient(setting.Value)
+}
+
+func (s *Server) testGoogleBooks(c echo.Context) error {
+	client := s.getGoogleBooksClient()
+	if client == nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Google Books API key not configured"})
+	}
+
+	if err := client.Test(); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Connection failed: " + err.Error()})
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"message":        "Connection successful",
+		"quotaUsed":      client.QuotaUsed(),
+		"quotaRemaining": client.QuotaRemaining(),
+	})
+}
+
+func (s *Server) getGoogleBooksQuota(c echo.Context) error {
+	client := s.getGoogleBooksClient()
+	if client == nil {
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"configured": false,
+			"quotaUsed":  0,
+			"quotaLimit": 1000,
+			"remaining":  0,
+		})
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"configured": true,
+		"quotaUsed":  client.QuotaUsed(),
+		"quotaLimit": 1000,
+		"remaining":  client.QuotaRemaining(),
+	})
+}
+
+type EbookStatusResponse struct {
+	ISBN           string `json:"isbn"`
+	Checked        bool   `json:"checked"`
+	IsEbook        *bool  `json:"isEbook,omitempty"`
+	HasEpub        *bool  `json:"hasEpub,omitempty"`
+	HasPdf         *bool  `json:"hasPdf,omitempty"`
+	BuyLink        string `json:"buyLink,omitempty"`
+	GoogleVolumeID string `json:"googleVolumeId,omitempty"`
+	QuotaExhausted bool   `json:"quotaExhausted"`
+}
+
+func (s *Server) checkEbookStatus(c echo.Context) error {
+	isbn := c.QueryParam("isbn")
+	if isbn == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "ISBN parameter is required"})
+	}
+
+	client := s.getGoogleBooksClient()
+	if client == nil {
+		return c.JSON(http.StatusOK, EbookStatusResponse{
+			ISBN:           isbn,
+			Checked:        false,
+			QuotaExhausted: true,
+		})
+	}
+
+	info, err := client.GetVolumeByISBN(isbn)
+	if err != nil {
+		if err == googlebooks.ErrQuotaExhausted {
+			return c.JSON(http.StatusOK, EbookStatusResponse{
+				ISBN:           isbn,
+				Checked:        false,
+				QuotaExhausted: true,
+			})
+		}
+		if err == googlebooks.ErrNotFound {
+			isEbook := false
+			return c.JSON(http.StatusOK, EbookStatusResponse{
+				ISBN:    isbn,
+				Checked: true,
+				IsEbook: &isEbook,
+			})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+
+	return c.JSON(http.StatusOK, EbookStatusResponse{
+		ISBN:           isbn,
+		Checked:        true,
+		IsEbook:        &info.IsEbook,
+		HasEpub:        &info.HasEpub,
+		HasPdf:         &info.HasPdf,
+		BuyLink:        info.BuyLink,
+		GoogleVolumeID: info.VolumeID,
+	})
 }

@@ -117,11 +117,16 @@ func (s *Server) setupRoutes() {
 	protected.GET("/series", s.getSeries)
 	protected.GET("/series/:id", s.getSeriesDetail)
 	protected.POST("/series/:id/books", s.addSeriesBooks)
+	protected.DELETE("/series/:id", s.deleteSeries)
 
 	// Search endpoints
-	// Register POST route before GET to avoid path conflicts
 	protected.POST("/search/hardcover/test", s.testHardcover)
 	protected.GET("/search/hardcover", s.searchHardcover)
+	protected.POST("/search/openlibrary/test", s.testOpenLibrary)
+	protected.GET("/search/openlibrary", s.searchOpenLibrary)
+	protected.POST("/search/googlebooks/test", s.testGoogleBooks)
+	protected.GET("/search/googlebooks/quota", s.getGoogleBooksQuota)
+	protected.GET("/search/ebook-status", s.checkEbookStatus)
 	protected.GET("/search/indexers", s.searchIndexers)
 
 	// Hardcover detail endpoints (for viewing before adding)

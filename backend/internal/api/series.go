@@ -3,6 +3,7 @@ package api
 import (
 	"log"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
 	"time"
@@ -228,6 +229,44 @@ type AddSeriesBooksResponse struct {
 	AddedCount   int      `json:"addedCount"`
 	SkippedCount int      `json:"skippedCount"`
 	Errors       []string `json:"errors,omitempty"`
+}
+
+func (s *Server) deleteSeries(c echo.Context) error {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid series ID"})
+	}
+
+	deleteFiles := c.QueryParam("deleteFiles") == "true"
+
+	var series db.Series
+	if err := s.db.First(&series, id).Error; err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "Series not found"})
+	}
+
+	if deleteFiles {
+		var books []db.Book
+		s.db.Preload("MediaFiles").Where("series_id = ?", series.ID).Find(&books)
+
+		for _, book := range books {
+			for _, mf := range book.MediaFiles {
+				if err := os.Remove(mf.FilePath); err != nil && !os.IsNotExist(err) {
+					log.Printf("[WARN] Failed to delete file %s: %v", mf.FilePath, err)
+				}
+				s.db.Delete(&mf)
+			}
+		}
+	}
+
+	s.db.Model(&db.Book{}).Where("series_id = ?", series.ID).Update("series_id", nil)
+
+	if err := s.db.Delete(&series).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to delete series"})
+	}
+
+	log.Printf("[INFO] Deleted series '%s' (ID: %d), deleteFiles=%v", series.Name, series.ID, deleteFiles)
+
+	return c.NoContent(http.StatusNoContent)
 }
 
 func (s *Server) addSeriesBooks(c echo.Context) error {

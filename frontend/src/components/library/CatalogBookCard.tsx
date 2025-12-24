@@ -20,32 +20,27 @@ import { cn } from '@/lib/utils'
 import type { Book, BookStatus } from '@/types'
 
 interface CatalogBookCardProps {
-  // Book identification
-  hardcoverId: string
+  hardcoverId?: string
+  openLibraryWorkId?: string
   title: string
   coverUrl?: string
   rating?: number
   releaseYear?: number
   compilation?: boolean
   
-  // Series info (optional)
   seriesIndex?: number
   seriesName?: string
   
-  // Author info (optional, for series view)
   authorName?: string
   
-  // Edition info (optional)
   hasAudiobook?: boolean
   hasEbook?: boolean
   editionCount?: number
   
-  // Library status
   inLibrary: boolean
   libraryBook?: Book
   
-  // Actions
-  onAdd?: (hardcoverId: string) => void
+  onAdd?: (id: string, source: 'hardcover' | 'openlibrary') => void
   isAdding?: boolean
   onDelete?: (bookId: number) => void
   isDeleting?: boolean
@@ -86,6 +81,7 @@ const getStatusLabel = (status?: BookStatus | 'not_in_library') => {
 
 export function CatalogBookCard({
   hardcoverId,
+  openLibraryWorkId,
   title,
   coverUrl,
   rating,
@@ -104,8 +100,11 @@ export function CatalogBookCard({
   onDelete,
   isDeleting = false,
 }: CatalogBookCardProps) {
-  // Note: hasEbook is available but not displayed in card to reduce visual clutter
   void _hasEbook;
+  
+  const bookId = hardcoverId || openLibraryWorkId || ''
+  const bookSource: 'hardcover' | 'openlibrary' = hardcoverId ? 'hardcover' : 'openlibrary'
+  const detailLink = hardcoverId ? `/hardcover/book/${hardcoverId}` : '#'
   
   // Determine status - check if unreleased based on release year
   const isUnreleased = releaseYear && releaseYear > new Date().getFullYear()
@@ -137,12 +136,10 @@ export function CatalogBookCard({
   )
 
   if (!inLibrary) {
-    // Not in library - show preview card with add button
     return (
       <div className="group relative bg-neutral-800/30 border-2 border-dashed border-neutral-700 rounded-xl overflow-hidden hover:border-sky-500/50 transition-colors">
-        {/* Cover - clickable to preview */}
         <Link
-          to={`/hardcover/book/${hardcoverId}`}
+          to={detailLink}
           className="block aspect-[2/3] relative"
         >
           {coverUrl ? (
@@ -175,14 +172,13 @@ export function CatalogBookCard({
           )}
         </Link>
 
-        {/* Add Button - positioned at bottom right */}
-        {onAdd && (
+        {onAdd && bookId && (
           <div className="absolute bottom-16 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
             <Button
               size="sm"
               onClick={(e) => {
                 e.preventDefault()
-                onAdd(hardcoverId)
+                onAdd(bookId, bookSource)
               }}
               disabled={isAdding}
             >
@@ -198,10 +194,9 @@ export function CatalogBookCard({
           </div>
         )}
 
-        {/* Info */}
         <div className="p-3">
           <Link
-            to={`/hardcover/book/${hardcoverId}`}
+            to={detailLink}
             className="font-medium text-neutral-400 text-sm line-clamp-2 hover:text-sky-400 transition-colors"
           >
             {title}
@@ -229,14 +224,13 @@ export function CatalogBookCard({
     )
   }
 
-  // In library - show full card with status
-  const bookId = libraryBook?.id
+  const libraryBookId = libraryBook?.id
   const status = libraryBook?.status
   const monitored = libraryBook?.monitored
 
   return (
     <Link
-      to={bookId ? `/books/${bookId}` : `/hardcover/book/${hardcoverId}`}
+      to={libraryBookId ? `/books/${libraryBookId}` : detailLink}
       className="group relative bg-neutral-800/50 rounded-xl overflow-hidden hover:ring-2 hover:ring-sky-500/50 transition-all"
     >
       {/* Cover */}
@@ -277,8 +271,7 @@ export function CatalogBookCard({
           </div>
         )}
 
-        {/* Delete Button */}
-        {onDelete && bookId && (
+        {onDelete && libraryBookId && (
           <div className="absolute bottom-16 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
             <Button
               size="sm"
@@ -286,7 +279,7 @@ export function CatalogBookCard({
               onClick={(e) => {
                 e.preventDefault()
                 e.stopPropagation()
-                onDelete(bookId)
+                onDelete(libraryBookId)
               }}
               disabled={isDeleting}
             >

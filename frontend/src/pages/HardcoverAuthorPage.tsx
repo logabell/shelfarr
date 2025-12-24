@@ -16,8 +16,7 @@ import {
   Download,
   EyeOff,
   Clock,
-  Library,
-  BookMarked
+  Library
 } from 'lucide-react'
 import { Topbar } from '@/components/layout/Topbar'
 import { Button } from '@/components/ui/button'
@@ -43,13 +42,12 @@ export function HardcoverAuthorPage() {
   const [addingBooks, setAddingBooks] = useState<Set<string>>(new Set())
   const [notifications, setNotifications] = useState<Notification[]>([])
   const [sortFilterState, setSortFilterState] = useState<SortFilterState>(
-    getDefaultSortFilterState(false) // false = not a series view
+    getDefaultSortFilterState(false)
   )
-  const [showPhysical, setShowPhysical] = useState(false)
 
   const { data: author, isLoading, error } = useQuery({
-    queryKey: ['hardcoverAuthor', id, showPhysical],
-    queryFn: () => getHardcoverAuthor(id!, showPhysical),
+    queryKey: ['hardcoverAuthor', id],
+    queryFn: () => getHardcoverAuthor(id!, false),
     enabled: !!id,
   })
 
@@ -382,8 +380,8 @@ export function HardcoverAuthorPage() {
           </div>
         )}
 
-        {/* Physical-Only Books Notice */}
-        {author.physicalOnlyCount > 0 && (
+        {/* Physical-Only Books Notice - DISABLED: Hardcover data is often incomplete for ebooks. Rely on Google Books check instead. */}
+        {/* {author.physicalOnlyCount > 0 && (
           <div className="bg-neutral-800/30 border border-neutral-700 rounded-lg p-3 flex items-center justify-between">
             <div className="flex items-center gap-3 text-neutral-400">
               <BookMarked className="w-4 h-4 text-amber-500" />
@@ -410,7 +408,7 @@ export function HardcoverAuthorPage() {
               )}
             </Button>
           </div>
-        )}
+        )} */}
 
         {/* Books Grid */}
         <div>
@@ -582,21 +580,7 @@ export function HardcoverAuthorPage() {
             </div>
           )}
           
-          {processedBooks.length === 0 && allBooks.length === 0 && !showPhysical && author.physicalOnlyCount > 0 && (
-            <div className="text-center py-12 border border-dashed border-neutral-700 rounded-lg mt-4">
-              <BookMarked className="w-12 h-12 mx-auto text-amber-500/50 mb-4" />
-              <p className="text-neutral-400">No books with digital editions found</p>
-              <p className="text-neutral-500 text-sm mt-1">
-                {author.physicalOnlyCount} {author.physicalOnlyCount === 1 ? 'book' : 'books'} with physical editions only
-              </p>
-              <button 
-                onClick={() => setShowPhysical(true)}
-                className="text-sky-400 hover:text-sky-300 text-sm mt-3"
-              >
-                Show physical-only books
-              </button>
-            </div>
-          )}
+
         </div>
       </div>
     </div>

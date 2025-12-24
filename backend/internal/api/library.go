@@ -42,14 +42,15 @@ type BookResponse struct {
 // AuthorResponse represents an author in API responses
 type AuthorResponse struct {
 	ID              uint   `json:"id"`
-	HardcoverID     string `json:"hardcoverId"`
+	HardcoverID     string `json:"hardcoverId,omitempty"`
+	OpenLibraryID   string `json:"openLibraryId,omitempty"`
 	Name            string `json:"name"`
 	SortName        string `json:"sortName"`
 	ImageURL        string `json:"imageUrl"`
 	Monitored       bool   `json:"monitored"`
-	BookCount       int    `json:"bookCount,omitempty"`       // Books in library
-	TotalBooksCount int    `json:"totalBooksCount,omitempty"` // Total books from Hardcover (cached)
-	DownloadedCount int    `json:"downloadedCount,omitempty"` // Books with files
+	BookCount       int    `json:"bookCount,omitempty"`
+	TotalBooksCount int    `json:"totalBooksCount,omitempty"`
+	DownloadedCount int    `json:"downloadedCount,omitempty"`
 }
 
 // SeriesResponse represents a series in API responses
