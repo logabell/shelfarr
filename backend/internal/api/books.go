@@ -281,7 +281,6 @@ func (s *Server) bulkUpdateBooks(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]int64{"updated": result.RowsAffected})
 }
 
-// bulkDeleteBooks deletes multiple books at once
 func (s *Server) bulkDeleteBooks(c echo.Context) error {
 	var req BulkDeleteRequest
 	if err := c.Bind(&req); err != nil {
@@ -292,21 +291,233 @@ func (s *Server) bulkDeleteBooks(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "No book IDs provided"})
 	}
 
-	// If deleteFiles is true, we'd need to actually delete files from disk
-	// For now, just soft-delete the media files
 	if req.DeleteFiles {
-		// TODO: Implement actual file deletion
 		s.db.Where("book_id IN ?", req.BookIDs).Delete(&db.MediaFile{})
 	} else {
-		// Just soft-delete media files (they stay in recycle bin)
 		s.db.Where("book_id IN ?", req.BookIDs).Delete(&db.MediaFile{})
 	}
 
-	// Delete the books (soft delete)
 	result := s.db.Where("id IN ?", req.BookIDs).Delete(&db.Book{})
 	if result.Error != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to delete books"})
 	}
 
 	return c.JSON(http.StatusOK, map[string]int64{"deleted": result.RowsAffected})
+}
+
+func (s *Server) getBookEditions(c echo.Context) error {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid book ID"})
+	}
+
+	var book db.Book
+	if err := s.db.First(&book, id).Error; err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "Book not found"})
+	}
+
+	var editions []db.Edition
+	if err := s.db.Where("book_id = ?", id).Preload("Publisher").Find(&editions).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to fetch editions"})
+	}
+
+	type EditionResp struct {
+		ID            uint   `json:"id"`
+		HardcoverID   string `json:"hardcoverId"`
+		Format        string `json:"format"`
+		EditionFormat string `json:"editionFormat,omitempty"`
+		ISBN10        string `json:"isbn10,omitempty"`
+		ISBN13        string `json:"isbn13,omitempty"`
+		ASIN          string `json:"asin,omitempty"`
+		Title         string `json:"title,omitempty"`
+		Subtitle      string `json:"subtitle,omitempty"`
+		LanguageCode  string `json:"languageCode,omitempty"`
+		Language      string `json:"language,omitempty"`
+		PublisherName string `json:"publisherName,omitempty"`
+		PageCount     int    `json:"pageCount,omitempty"`
+		AudioSeconds  int    `json:"audioSeconds,omitempty"`
+		ReleaseDate   string `json:"releaseDate,omitempty"`
+		CoverURL      string `json:"coverUrl,omitempty"`
+	}
+
+	editionResps := make([]EditionResp, 0, len(editions))
+	for _, ed := range editions {
+		resp := EditionResp{
+			ID:            ed.ID,
+			HardcoverID:   ed.HardcoverID,
+			Format:        ed.Format,
+			EditionFormat: ed.EditionFormat,
+			ISBN10:        ed.ISBN10,
+			ISBN13:        ed.ISBN13,
+			ASIN:          ed.ASIN,
+			Title:         ed.Title,
+			Subtitle:      ed.Subtitle,
+			LanguageCode:  ed.LanguageCode,
+			Language:      ed.Language,
+			PublisherName: ed.PublisherName,
+			PageCount:     ed.PageCount,
+			AudioSeconds:  ed.AudioSeconds,
+			CoverURL:      ed.CoverURL,
+		}
+		if ed.ReleaseDate != nil {
+			resp.ReleaseDate = ed.ReleaseDate.Format("2006-01-02")
+		}
+		editionResps = append(editionResps, resp)
+	}
+
+	return c.JSON(http.StatusOK, map[string]any{
+		"bookId":    book.ID,
+		"bookTitle": book.Title,
+		"editions":  editionResps,
+	})
+}
+
+func (s *Server) getBookContributors(c echo.Context) error {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid book ID"})
+	}
+
+	var book db.Book
+	if err := s.db.First(&book, id).Error; err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "Book not found"})
+	}
+
+	var contributors []db.Contributor
+	if err := s.db.Where("book_id = ?", id).Preload("Author").Order("position ASC").Find(&contributors).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to fetch contributors"})
+	}
+
+	type ContributorResp struct {
+		ID          uint   `json:"id"`
+		AuthorID    uint   `json:"authorId"`
+		AuthorName  string `json:"authorName"`
+		AuthorImage string `json:"authorImage,omitempty"`
+		Role        string `json:"role"`
+		Position    int    `json:"position"`
+	}
+
+	contribResps := make([]ContributorResp, 0, len(contributors))
+	for _, c := range contributors {
+		contribResps = append(contribResps, ContributorResp{
+			ID:          c.ID,
+			AuthorID:    c.AuthorID,
+			AuthorName:  c.Author.Name,
+			AuthorImage: c.Author.ImageURL,
+			Role:        string(c.Role),
+			Position:    c.Position,
+		})
+	}
+
+	return c.JSON(http.StatusOK, map[string]any{
+		"bookId":       book.ID,
+		"bookTitle":    book.Title,
+		"contributors": contribResps,
+	})
+}
+
+func (s *Server) refreshBookMetadata(c echo.Context) error {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid book ID"})
+	}
+
+	var book db.Book
+	if err := s.db.First(&book, id).Error; err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "Book not found"})
+	}
+
+	if book.HardcoverID == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Book has no Hardcover ID"})
+	}
+
+	client, err := s.getHardcoverClient()
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to create Hardcover client"})
+	}
+
+	bookData, err := client.GetBook(book.HardcoverID)
+	if err != nil {
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "Failed to fetch book from Hardcover: " + err.Error()})
+	}
+
+	s.updateBookFromHardcover(&book, bookData)
+
+	if err := s.db.Save(&book).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to save book"})
+	}
+
+	s.syncGenres(&book, bookData.Genres)
+	s.syncEditions(&book, bookData)
+	s.syncContributors(&book, bookData)
+
+	return c.JSON(http.StatusOK, map[string]any{
+		"message":  "Metadata refreshed",
+		"bookId":   book.ID,
+		"title":    book.Title,
+		"editions": len(bookData.Editions),
+	})
+}
+
+func (s *Server) getGenres(c echo.Context) error {
+	type GenreResponse struct {
+		ID        uint   `json:"id"`
+		Name      string `json:"name"`
+		Slug      string `json:"slug"`
+		BookCount int64  `json:"bookCount"`
+	}
+
+	var genres []db.Genre
+	if err := s.db.Find(&genres).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to fetch genres"})
+	}
+
+	responses := make([]GenreResponse, 0, len(genres))
+	for _, g := range genres {
+		var count int64
+		s.db.Model(&db.Book{}).Joins("JOIN book_genres ON book_genres.book_id = books.id").
+			Where("book_genres.genre_id = ?", g.ID).Count(&count)
+
+		responses = append(responses, GenreResponse{
+			ID:        g.ID,
+			Name:      g.Name,
+			Slug:      g.Slug,
+			BookCount: count,
+		})
+	}
+
+	return c.JSON(http.StatusOK, responses)
+}
+
+func (s *Server) updateBookFromHardcover(book *db.Book, data *hardcover.BookData) {
+	book.Title = data.Title
+	book.Subtitle = data.Subtitle
+	book.Headline = data.Headline
+	book.Slug = data.Slug
+	book.ISBN = data.ISBN
+	book.ISBN13 = data.ISBN13
+	book.Description = data.Description
+	book.CoverURL = data.CoverURL
+	book.Rating = data.Rating
+	book.RatingsCount = data.RatingsCount
+	book.ReviewsCount = data.ReviewsCount
+	book.ReleaseDate = data.ReleaseDate
+	book.ReleaseYear = data.ReleaseYear
+	book.PageCount = data.PageCount
+	book.LanguageCode = data.LanguageCode
+	book.Language = data.Language
+	book.AudioDuration = data.AudioDuration
+	book.HasEbook = data.HasEbook
+	book.HasAudiobook = data.HasAudiobook
+	book.HasPhysical = data.HasPhysical
+	book.EditionCount = data.EditionCount
+	book.EbookEditionCount = data.EbookEditionCount
+	book.AudiobookEditionCount = data.AudiobookEditionCount
+	book.PhysicalEditionCount = data.PhysicalEditionCount
+	book.LiteraryType = data.LiteraryType
+	book.Category = data.Category
+	book.Compilation = data.Compilation
+
+	now := timeNow()
+	book.LastSyncedAt = &now
 }

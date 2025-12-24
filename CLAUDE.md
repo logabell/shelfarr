@@ -138,34 +138,29 @@ Environment variables (see README.md for full list):
 - `SHELFARR_AUDIOBOOKS_PATH` - Audiobook library path
 - `HARDCOVER_API_URL` - Metadata API endpoint
 
-### Hardcover.app API Limitations
+### Hardcover.app API
 
-**Critical: The Hardcover API is still in beta and may change without notice.**
+**Critical: Always consult the documentation before modifying Hardcover integration.**
 
-Rate Limits & Timeouts:
-- **60 requests per minute** - Rate limiting is enforced
-- **30 second query timeout** - Long queries will fail
-- **Maximum depth of 3** - GraphQL queries cannot nest deeper than 3 levels
+#### Required Documentation
 
-Data Access Restrictions:
-- Can only access: your own user data, public data, and data of users you follow
-- Must run from backend (server-side) - **never from browser**
-- Only for offline/local use - cannot be used from public websites
+| Document | Purpose |
+|----------|---------|
+| `.documents/hardcover_api_documentation.md` | Complete API reference (rate limits, query patterns, error handling) |
+| `.documents/api_implementation_overview.md` | Where API is used in codebase (living document - keep updated!) |
 
-Disabled Query Operators:
-- `_like`, `_nlike`, `_ilike` - LIKE pattern matching disabled
-- `_regex`, `_nregex`, `_iregex`, `_niregex` - Regex matching disabled
-- `_similar`, `_nsimilar` - Similar matching disabled
+#### Quick Reference
+- **Rate limit**: 60 req/min (client enforces 1 req/sec)
+- **Query depth**: Max 3 levels of nesting
+- **Disabled operators**: `_like`, `_ilike`, `_regex` - use `search()` for text matching
+- **IDs are integers**: Use `strconv.Atoi()` when passing IDs from URL params
 
-Token & Security:
-- API tokens **expire after 1 year**, and reset on January 1st
-- Tokens may be reset without notice during beta
-- **Never share your token** - it provides full account access
-- Include a `user-agent` header describing your script
+#### Maintenance Requirement
 
-GraphQL ID Types:
-- Book, Author, Series IDs are `Int!` type - must convert string IDs to integers
-- Use `strconv.Atoi()` when passing IDs from URL parameters to GraphQL queries
+**When modifying Hardcover integration, you MUST update `.documents/api_implementation_overview.md`** to reflect:
+- New/modified API routes or handlers
+- New/modified client methods
+- New/modified frontend pages or components using Hardcover data
 
 ## Common Patterns
 

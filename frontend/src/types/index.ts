@@ -2,6 +2,42 @@
 
 export type BookStatus = 'missing' | 'downloading' | 'downloaded' | 'unmonitored' | 'unreleased'
 export type MediaType = 'ebook' | 'audiobook'
+export type ContributorRole = 'Author' | 'Narrator' | 'Editor' | 'Illustrator' | 'Translator' | 'Contributor'
+
+export interface Edition {
+  id: number
+  hardcoverId: string
+  format: string
+  editionFormat?: string
+  isbn10?: string
+  isbn13?: string
+  asin?: string
+  title?: string
+  subtitle?: string
+  languageCode?: string
+  language?: string
+  publisherName?: string
+  pageCount?: number
+  audioSeconds?: number
+  releaseDate?: string
+  coverUrl?: string
+}
+
+export interface Contributor {
+  id: number
+  authorId: number
+  authorName: string
+  authorImage?: string
+  role: ContributorRole
+  position: number
+}
+
+export interface Genre {
+  id: number
+  name: string
+  slug: string
+  bookCount?: number
+}
 
 export interface Author {
   id: number

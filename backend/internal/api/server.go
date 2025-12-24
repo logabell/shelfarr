@@ -105,6 +105,12 @@ func (s *Server) setupRoutes() {
 	protected.PUT("/books/:id", s.updateBook)
 	protected.DELETE("/books/:id", s.deleteBook)
 	protected.POST("/books/:bookId/search", s.automaticSearch)
+	protected.GET("/books/:id/editions", s.getBookEditions)
+	protected.GET("/books/:id/contributors", s.getBookContributors)
+	protected.POST("/books/:id/refresh", s.refreshBookMetadata)
+
+	// Genre endpoints
+	protected.GET("/genres", s.getGenres)
 
 	// Author endpoints
 	protected.GET("/authors", s.getAuthors)
@@ -215,6 +221,7 @@ func (s *Server) setupRoutes() {
 	protected.POST("/system/tasks/:name/run", s.runSystemTask)
 	protected.GET("/system/logs", s.getSystemLogs)
 	protected.POST("/system/backup", s.createBackup)
+	protected.POST("/system/refresh-metadata", s.refreshAllMetadata)
 
 	// Notification endpoints
 	protected.GET("/notifications", s.getNotifications)

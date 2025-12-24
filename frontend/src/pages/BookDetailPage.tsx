@@ -18,7 +18,9 @@ import {
   Send,
   Filter,
   SortDesc,
-  X
+  X,
+  RefreshCw,
+  Globe
 } from 'lucide-react'
 import { Topbar } from '@/components/layout/Topbar'
 import { Button } from '@/components/ui/button'
@@ -46,7 +48,19 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { FormatAvailability } from '@/components/ui/format-availability'
-import { getBook, searchIndexers, updateBook, triggerDownload, deleteBook, invalidateAllBookQueries } from '@/api/client'
+import { EditionsTable } from '@/components/book/EditionsTable'
+import { ContributorsList } from '@/components/book/ContributorsList'
+import { GenreBadges } from '@/components/book/GenreBadges'
+import { 
+  getBook, 
+  searchIndexers, 
+  updateBook, 
+  triggerDownload, 
+  deleteBook, 
+  invalidateAllBookQueries,
+  refreshBookMetadata,
+  getHardcoverBook
+} from '@/api/client'
 import type { IndexerSearchResult } from '@/types'
 
 // Sort options
@@ -115,6 +129,12 @@ export function BookDetailPage() {
     queryKey: ['book', id],
     queryFn: () => getBook(Number(id)),
     enabled: !!id,
+  })
+
+  const { data: hardcoverData } = useQuery({
+    queryKey: ['hardcoverBook', book?.hardcoverId],
+    queryFn: () => getHardcoverBook(book!.hardcoverId),
+    enabled: !!book?.hardcoverId,
   })
 
   const { data: searchResults, refetch: refetchSearch } = useQuery({
@@ -199,6 +219,15 @@ export function BookDetailPage() {
       updateBook(Number(id), updates),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['book', id] })
+    },
+  })
+
+  const refreshMutation = useMutation({
+    mutationFn: () => refreshBookMetadata(Number(id)),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['book', id] })
+      queryClient.invalidateQueries({ queryKey: ['editions', Number(id)] })
+      queryClient.invalidateQueries({ queryKey: ['contributors', Number(id)] })
     },
   })
 
@@ -333,6 +362,15 @@ export function BookDetailPage() {
 
                   <div className="flex items-center gap-2">
                     <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={() => refreshMutation.mutate()}
+                      disabled={refreshMutation.isPending}
+                      title="Refresh Metadata"
+                    >
+                      <RefreshCw className={`h-4 w-4 ${refreshMutation.isPending ? 'animate-spin' : ''}`} />
+                    </Button>
+                    <Button
                       variant={book.monitored ? 'default' : 'outline'}
                       onClick={handleToggleMonitored}
                       disabled={updateMutation.isPending}
@@ -381,6 +419,13 @@ export function BookDetailPage() {
                     <div className="flex items-center gap-1 text-sm text-muted-foreground">
                       <BookOpen className="h-4 w-4" />
                       <span>{book.pageCount} pages</span>
+                    </div>
+                  )}
+
+                  {hardcoverData?.languageCode && (
+                    <div className="flex items-center gap-1 text-sm text-muted-foreground uppercase">
+                      <Globe className="h-4 w-4" />
+                      <span>{hardcoverData.languageCode}</span>
                     </div>
                   )}
 
@@ -478,6 +523,23 @@ export function BookDetailPage() {
                   </div>
                 ))}
               </div>
+            </section>
+          )}
+
+          <section>
+            <h2 className="text-xl font-semibold mb-4">Contributors</h2>
+            <ContributorsList bookId={book.id} />
+          </section>
+
+          <section>
+            <h2 className="text-xl font-semibold mb-4">Editions</h2>
+            <EditionsTable bookId={book.id} />
+          </section>
+
+          {hardcoverData?.genres && hardcoverData.genres.length > 0 && (
+            <section>
+              <h2 className="text-xl font-semibold mb-4">Genres</h2>
+              <GenreBadges genres={hardcoverData.genres} />
             </section>
           )}
 

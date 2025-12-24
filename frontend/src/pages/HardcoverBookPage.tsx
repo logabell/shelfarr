@@ -38,7 +38,7 @@ export function HardcoverBookPage() {
   })
 
   const addMutation = useMutation({
-    mutationFn: () => addHardcoverBook(id!, { monitored: true }),
+    mutationFn: () => addHardcoverBook(decodedId, { monitored: true }),
     onSuccess: (result) => {
       setIsAdding(false)
       invalidateAllBookQueries(queryClient)
@@ -57,7 +57,7 @@ export function HardcoverBookPage() {
     mutationFn: (bookId: number) => deleteBook(bookId),
     onSuccess: () => {
       invalidateAllBookQueries(queryClient)
-      queryClient.invalidateQueries({ queryKey: ['hardcoverBook', id] })
+      queryClient.invalidateQueries({ queryKey: ['hardcoverBook', decodedId] })
     },
   })
 

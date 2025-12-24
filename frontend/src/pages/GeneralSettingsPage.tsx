@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Loader2, Globe, Settings, Calendar, Home, Check, X } from 'lucide-react'
+import { ArrowLeft, Loader2, Globe, Settings, Calendar, Home, Check, X, RefreshCw, Database } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { Topbar } from '@/components/layout/Topbar'
 import { Button } from '@/components/ui/button'
@@ -14,7 +14,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
-import { getGeneralSettings, updateGeneralSettings, getAvailableLanguages } from '@/api/client'
+import { getGeneralSettings, updateGeneralSettings, getAvailableLanguages, refreshAllMetadata } from '@/api/client'
 
 interface GeneralSettings {
   instanceName: string
@@ -72,6 +72,17 @@ export function GeneralSettingsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['generalSettings'] })
       setHasChanges(false)
+    },
+  })
+
+  const [refreshResult, setRefreshResult] = useState<{ refreshed: number; failed: number; errors?: string[] } | null>(null)
+
+  const refreshMetadataMutation = useMutation({
+    mutationFn: refreshAllMetadata,
+    onSuccess: (result) => {
+      setRefreshResult({ refreshed: result.refreshed, failed: result.failed, errors: result.errors })
+      queryClient.invalidateQueries({ queryKey: ['library'] })
+      queryClient.invalidateQueries({ queryKey: ['books'] })
     },
   })
 
@@ -262,6 +273,63 @@ export function GeneralSettingsPage() {
                 <p className="text-xs text-muted-foreground">
                   How dates are displayed throughout the application
                 </p>
+              </div>
+            </div>
+          </section>
+
+          {/* Metadata Maintenance */}
+          <section className="space-y-4">
+            <div className="flex items-center gap-2 text-lg font-semibold">
+              <Database className="h-5 w-5 text-primary" />
+              <h2>Metadata</h2>
+            </div>
+
+            <div className="bg-card border rounded-lg p-6 space-y-4">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label>Refresh All Metadata</Label>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Re-fetch metadata for all books from Hardcover.app including editions, contributors, and genres.
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setRefreshResult(null)
+                      refreshMetadataMutation.mutate(undefined)
+                    }}
+                    disabled={refreshMetadataMutation.isPending}
+                  >
+                    {refreshMetadataMutation.isPending ? (
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    ) : (
+                      <RefreshCw className="h-4 w-4 mr-2" />
+                    )}
+                    {refreshMetadataMutation.isPending ? 'Refreshing...' : 'Refresh Metadata'}
+                  </Button>
+                </div>
+                
+                {refreshResult && (
+                  <div className="mt-3 p-3 rounded-lg bg-muted text-sm space-y-2">
+                    <div>
+                      <span className="text-green-500 font-medium">{refreshResult.refreshed}</span> books refreshed
+                      {refreshResult.failed > 0 && (
+                        <span className="ml-2 text-destructive">({refreshResult.failed} failed)</span>
+                      )}
+                    </div>
+                    {refreshResult.errors && refreshResult.errors.length > 0 && (
+                      <div className="text-xs text-destructive space-y-1 max-h-32 overflow-y-auto">
+                        {refreshResult.errors.slice(0, 5).map((err, i) => (
+                          <div key={i}>{err}</div>
+                        ))}
+                        {refreshResult.errors.length > 5 && (
+                          <div className="text-muted-foreground">...and {refreshResult.errors.length - 5} more</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           </section>

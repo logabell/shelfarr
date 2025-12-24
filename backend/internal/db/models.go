@@ -25,16 +25,49 @@ const (
 	MediaTypeAudiobook MediaType = "audiobook"
 )
 
+// ContributorRole defines the type of contribution to a book
+type ContributorRole string
+
+const (
+	RoleAuthor      ContributorRole = "Author"
+	RoleNarrator    ContributorRole = "Narrator"
+	RoleEditor      ContributorRole = "Editor"
+	RoleIllustrator ContributorRole = "Illustrator"
+	RoleTranslator  ContributorRole = "Translator"
+	RoleContributor ContributorRole = "Contributor" // Generic fallback
+)
+
 // Author represents a book author
 type Author struct {
 	gorm.Model
 	HardcoverID string `gorm:"uniqueIndex"`
 	Name        string `gorm:"index"`
 	SortName    string
-	Biography   string
+	Biography   string `gorm:"type:text"`
 	ImageURL    string
-	Monitored   bool `gorm:"default:false"`
-	Books       []Book
+	Slug        string `gorm:"index"` // URL-friendly identifier
+
+	// Biographical info from Hardcover
+	BornDate  *time.Time
+	BornYear  *int
+	DeathDate *time.Time
+	DeathYear *int
+	Location  string
+
+	// Diversity metadata (pointers to distinguish null from false)
+	GenderID *int
+	IsBIPOC  *bool
+	IsLGBTQ  *bool
+
+	// Alternate names (JSON array stored as string)
+	AlternateNames string `gorm:"type:text"` // JSON: ["Pen Name", "Pseudonym"]
+
+	// Monitoring
+	Monitored bool `gorm:"default:false"`
+
+	// Relationships
+	Books         []Book
+	Contributions []Contributor // All contributions by this author
 
 	// Cached metadata from Hardcover
 	TotalBooksCount int        `gorm:"default:0"` // Total books by author from Hardcover
@@ -46,12 +79,38 @@ type Series struct {
 	gorm.Model
 	HardcoverID string `gorm:"uniqueIndex"`
 	Name        string `gorm:"index"`
-	Description string
-	Books       []Book
+	Slug        string `gorm:"index"` // URL-friendly identifier
+	Description string `gorm:"type:text"`
+
+	// Series metadata from Hardcover
+	IsCompleted       *bool // Pointer to distinguish null from false
+	PrimaryBooksCount int   `gorm:"default:0"` // Main entries only (excludes novellas, etc.)
+
+	// Primary author (optional - some series have multiple authors)
+	AuthorID *uint
+	Author   *Author
+
+	// Relationships
+	Books []Book
 
 	// Cached metadata from Hardcover
 	TotalBooksCount int        `gorm:"default:0"` // Total books in series from Hardcover
 	CachedAt        *time.Time // When Hardcover data was last cached
+}
+
+// Publisher represents a book publisher
+type Publisher struct {
+	gorm.Model
+	HardcoverID string `gorm:"uniqueIndex"`
+	Name        string `gorm:"index"`
+}
+
+// Genre represents a book genre/tag extracted from Hardcover's cached_tags
+type Genre struct {
+	gorm.Model
+	Name  string  `gorm:"uniqueIndex"` // "Fantasy", "Science Fiction", "Romance"
+	Slug  string  `gorm:"uniqueIndex"` // URL-friendly: "science-fiction"
+	Books []*Book `gorm:"many2many:book_genres;"`
 }
 
 // Book represents a book entry in the library
@@ -60,30 +119,125 @@ type Book struct {
 	HardcoverID string `gorm:"uniqueIndex"`
 	Title       string `gorm:"index"`
 	SortTitle   string
-	ISBN        string `gorm:"index"`
-	ISBN13      string `gorm:"index"`
-	Description string
-	CoverURL    string
-	Rating      float32
-	ReleaseDate *time.Time
-	PageCount   int
+	Subtitle    string // Book subtitle
+	Headline    string // Short marketing tagline
+	Slug        string `gorm:"index"` // URL-friendly identifier
 
-	// Relationships
-	AuthorID    uint
-	Author      Author
+	// Identifiers (from primary/default edition for quick access)
+	ISBN   string `gorm:"index"`
+	ISBN13 string `gorm:"index"`
+
+	// Core metadata
+	Description  string `gorm:"type:text"`
+	CoverURL     string
+	Rating       float32
+	RatingsCount int // Number of ratings on Hardcover
+	ReviewsCount int // Number of reviews on Hardcover
+	ReleaseDate  *time.Time
+	ReleaseYear  int // For quick filtering
+	PageCount    int
+
+	// Primary language (from preferred/default edition)
+	LanguageCode string `gorm:"index;size:5"` // ISO 639-1: "en", "es", "fr"
+	Language     string // Full name: "English", "Spanish"
+
+	// Audio info (from audiobook editions)
+	AudioDuration int // Seconds - from longest audiobook edition
+
+	// Format availability flags (computed from editions)
+	HasEbook     bool `gorm:"index;default:false"`
+	HasAudiobook bool `gorm:"index;default:false"`
+	HasPhysical  bool `gorm:"index;default:false"`
+
+	// Edition counts
+	EditionCount          int `gorm:"default:0"`
+	EbookEditionCount     int `gorm:"default:0"`
+	AudiobookEditionCount int `gorm:"default:0"`
+	PhysicalEditionCount  int `gorm:"default:0"`
+
+	// Classification
+	LiteraryType string // "Novel", "Novella", "Short Story", "Poetry"
+	Category     string // "Fiction", "Non-fiction"
+	Compilation  bool   `gorm:"default:false"` // Is anthology/collection
+
+	// Primary Author (first contributor with Role=Author)
+	AuthorID uint
+	Author   Author
+
+	// Series relationship
 	SeriesID    *uint
 	Series      *Series
 	SeriesIndex *float32
+
+	// Many-to-many relationships
+	Genres       []*Genre      `gorm:"many2many:book_genres;"`
+	Contributors []Contributor // All contributors (authors, narrators, etc.)
+	Editions     []Edition     // All editions
 
 	// Status tracking
 	Status    BookStatus `gorm:"default:'missing'"`
 	Monitored bool       `gorm:"default:true"`
 
-	// Media files
+	// Media files (downloaded content)
 	MediaFiles []MediaFile
 
-	// Metadata sync
-	LastSyncedAt *time.Time
+	// Sync tracking
+	LastSyncedAt *time.Time // When metadata was last refreshed from Hardcover
+}
+
+// Edition represents a specific edition of a book from Hardcover
+// Each book can have multiple editions (Kindle, Hardcover, Audiobook, translations, etc.)
+type Edition struct {
+	gorm.Model
+
+	// Hardcover reference
+	HardcoverID string `gorm:"uniqueIndex"` // Edition ID from Hardcover
+	BookID      uint   `gorm:"index;not null"`
+	Book        Book
+
+	// Identifiers
+	ISBN10 string `gorm:"index"`
+	ISBN13 string `gorm:"index"`
+	ASIN   string `gorm:"index"` // Amazon identifier (Kindle/Audible)
+
+	// Edition-specific metadata
+	Title         string // May differ from parent book (e.g., translated title)
+	Subtitle      string
+	EditionFormat string // Free-text: "Kindle Edition", "Hardcover", "Mass Market Paperback"
+
+	// Format classification (enumerated, reliable)
+	Format string `gorm:"index;size:20"` // "Physical", "Ebook", "Audiobook"
+
+	// Language
+	LanguageCode string `gorm:"index;size:5"` // ISO 639-1: "en", "es", "fr"
+	Language     string // Full name: "English", "Spanish"
+
+	// Publisher
+	PublisherID   *uint
+	Publisher     *Publisher
+	PublisherName string // Denormalized for quick display
+
+	// Physical/Audio attributes
+	PageCount    int
+	AudioSeconds int // For audiobooks - duration in seconds
+
+	// Release info (edition-specific)
+	ReleaseDate *time.Time
+
+	// Cover image (edition-specific - may differ from book cover)
+	CoverURL string
+}
+
+// Contributor represents a person's contribution to a book
+// Maps to Hardcover's "contributions" relationship
+type Contributor struct {
+	gorm.Model
+	BookID   uint `gorm:"index;not null"`
+	Book     Book
+	AuthorID uint `gorm:"index;not null"`
+	Author   Author
+	Role     ContributorRole `gorm:"index;size:20"`
+	Position int             `gorm:"default:0"` // Hardcover's position order (0 = primary)
 }
 
 // MediaFile represents a physical file (ebook or audiobook)

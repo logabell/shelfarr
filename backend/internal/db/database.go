@@ -19,12 +19,15 @@ func Initialize(dbPath string) (*gorm.DB, error) {
 	return db, nil
 }
 
-// Migrate runs all database migrations
 func Migrate(db *gorm.DB) error {
 	return db.AutoMigrate(
 		&Author{},
 		&Series{},
+		&Publisher{},
+		&Genre{},
 		&Book{},
+		&Edition{},
+		&Contributor{},
 		&MediaFile{},
 		&User{},
 		&ReadProgress{},

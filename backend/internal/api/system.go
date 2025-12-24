@@ -12,16 +12,16 @@ import (
 
 // SystemStatus represents the overall system status
 type SystemStatus struct {
-	Version       string       `json:"version"`
-	StartTime     time.Time    `json:"startTime"`
-	Uptime        string       `json:"uptime"`
-	OS            string       `json:"os"`
-	Arch          string       `json:"arch"`
-	GoVersion     string       `json:"goVersion"`
-	Database      DBStatus     `json:"database"`
-	Disk          DiskStatus   `json:"disk"`
-	Clients       ClientStatus `json:"clients"`
-	Library       LibStatus    `json:"library"`
+	Version   string       `json:"version"`
+	StartTime time.Time    `json:"startTime"`
+	Uptime    string       `json:"uptime"`
+	OS        string       `json:"os"`
+	Arch      string       `json:"arch"`
+	GoVersion string       `json:"goVersion"`
+	Database  DBStatus     `json:"database"`
+	Disk      DiskStatus   `json:"disk"`
+	Clients   ClientStatus `json:"clients"`
+	Library   LibStatus    `json:"library"`
 }
 
 // DBStatus represents database status
@@ -66,13 +66,13 @@ type LibStatus struct {
 
 // TaskInfo represents information about a scheduled task
 type TaskInfo struct {
-	Name        string    `json:"name"`
-	Interval    string    `json:"interval"`
-	LastRun     time.Time `json:"lastRun"`
-	NextRun     time.Time `json:"nextRun"`
-	Running     bool      `json:"running"`
-	Enabled     bool      `json:"enabled"`
-	LastStatus  string    `json:"lastStatus"`
+	Name       string    `json:"name"`
+	Interval   string    `json:"interval"`
+	LastRun    time.Time `json:"lastRun"`
+	NextRun    time.Time `json:"nextRun"`
+	Running    bool      `json:"running"`
+	Enabled    bool      `json:"enabled"`
+	LastStatus string    `json:"lastStatus"`
 }
 
 var serverStartTime = time.Now()
@@ -109,7 +109,7 @@ func (s *Server) getSystemStatus(c echo.Context) error {
 	var indexerCount, downloadClientCount int64
 	s.db.Model(&db.Indexer{}).Where("enabled = ?", true).Count(&indexerCount)
 	s.db.Model(&db.DownloadClient{}).Where("enabled = ?", true).Count(&downloadClientCount)
-	
+
 	status.Clients = ClientStatus{
 		Indexers:        int(indexerCount),
 		DownloadClients: int(downloadClientCount),
@@ -247,7 +247,7 @@ func checkPath(path string) PathStatus {
 	}
 
 	status.Exists = true
-	
+
 	// Check if writable by trying to create a temp file
 	testFile := path + "/.shelfarr_write_test"
 	if f, err := os.Create(testFile); err == nil {
@@ -264,7 +264,6 @@ func checkPath(path string) PathStatus {
 	return status
 }
 
-// calculateDirSize calculates the total size of files in a directory
 func calculateDirSize(path string) int64 {
 	var size int64
 	entries, err := os.ReadDir(path)
@@ -285,3 +284,66 @@ func calculateDirSize(path string) int64 {
 	return size
 }
 
+func (s *Server) refreshAllMetadata(c echo.Context) error {
+	var req struct {
+		BookIDs []uint `json:"bookIds"`
+	}
+	if err := c.Bind(&req); err != nil {
+		req.BookIDs = nil
+	}
+
+	var books []db.Book
+	query := s.db.Where("hardcover_id != ''")
+	if len(req.BookIDs) > 0 {
+		query = query.Where("id IN ?", req.BookIDs)
+	}
+	if err := query.Find(&books).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to fetch books"})
+	}
+
+	if len(books) == 0 {
+		return c.JSON(http.StatusOK, map[string]any{
+			"message":   "No books to refresh",
+			"refreshed": 0,
+			"failed":    0,
+		})
+	}
+
+	client, err := s.getHardcoverClient()
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to create Hardcover client"})
+	}
+
+	var refreshed, failed int
+	var errors []string
+
+	for _, book := range books {
+		bookData, err := client.GetBook(book.HardcoverID)
+		if err != nil {
+			failed++
+			errors = append(errors, book.Title+": "+err.Error())
+			continue
+		}
+
+		s.updateBookFromHardcover(&book, bookData)
+		if err := s.db.Save(&book).Error; err != nil {
+			failed++
+			errors = append(errors, book.Title+": save failed")
+			continue
+		}
+
+		s.syncGenres(&book, bookData.Genres)
+		s.syncEditions(&book, bookData)
+		s.syncContributors(&book, bookData)
+		refreshed++
+
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	return c.JSON(http.StatusOK, map[string]any{
+		"message":   "Metadata refresh completed",
+		"refreshed": refreshed,
+		"failed":    failed,
+		"errors":    errors,
+	})
+}
