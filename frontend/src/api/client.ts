@@ -20,7 +20,10 @@ import type {
   User,
   ReadProgress,
   QualityProfile,
-  AuthorWithBooks
+  AuthorWithBooks,
+  Edition,
+  Contributor,
+  Genre
 } from '@/types'
 
 // Re-export types for use in pages
@@ -85,6 +88,49 @@ export const deleteBook = async (id: number): Promise<{
   seriesId?: number | null;
 }> => {
   const { data } = await api.delete(`/books/${id}`)
+  return data
+}
+
+export const getBookEditions = async (id: number): Promise<{
+  bookId: number;
+  bookTitle: string;
+  editions: Edition[];
+}> => {
+  const { data } = await api.get(`/books/${id}/editions`)
+  return data
+}
+
+export const getBookContributors = async (id: number): Promise<{
+  bookId: number;
+  bookTitle: string;
+  contributors: Contributor[];
+}> => {
+  const { data } = await api.get(`/books/${id}/contributors`)
+  return data
+}
+
+export const refreshBookMetadata = async (id: number): Promise<{
+  message: string;
+  bookId: number;
+  title: string;
+  editions: number;
+}> => {
+  const { data } = await api.post(`/books/${id}/refresh`)
+  return data
+}
+
+export const getGenres = async (): Promise<Genre[]> => {
+  const { data } = await api.get('/genres')
+  return data
+}
+
+export const refreshAllMetadata = async (bookIds?: number[]): Promise<{
+  message: string;
+  refreshed: number;
+  failed: number;
+  errors?: string[];
+}> => {
+  const { data } = await api.post('/system/refresh-metadata', bookIds ? { bookIds } : {})
   return data
 }
 
@@ -241,6 +287,8 @@ export interface HardcoverBookDetail {
   audioDuration?: number
   inLibrary: boolean
   libraryBook?: Book
+  editions?: Edition[]
+  contributors?: Contributor[]
 }
 
 export interface HardcoverAuthorDetail {
@@ -832,6 +880,13 @@ export const apiClient = {
   addBook,
   updateBook,
   deleteBook,
+  getBookEditions,
+  getBookContributors,
+  refreshBookMetadata,
+  // Genres
+  getGenres,
+  // Metadata refresh
+  refreshAllMetadata,
   // Authors
   getAuthors,
   getAuthor,

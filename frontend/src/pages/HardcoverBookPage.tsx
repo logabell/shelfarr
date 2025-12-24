@@ -28,10 +28,13 @@ export function HardcoverBookPage() {
   const queryClient = useQueryClient()
   const [isAdding, setIsAdding] = useState(false)
 
+  const decodedId = id ? decodeURIComponent(id) : ''
+
   const { data: book, isLoading, error } = useQuery({
-    queryKey: ['hardcoverBook', id],
-    queryFn: () => getHardcoverBook(id!),
-    enabled: !!id,
+    queryKey: ['hardcoverBook', decodedId],
+    queryFn: () => getHardcoverBook(decodedId),
+    enabled: !!decodedId,
+    retry: 1,
   })
 
   const addMutation = useMutation({
@@ -284,8 +287,95 @@ export function HardcoverBookPage() {
           </div>
         </div>
 
-        {/* Additional Info Section */}
-        <div className="max-w-5xl mx-auto px-6 py-8">
+          {/* Additional Info Section */}
+        <div className="max-w-5xl mx-auto px-6 py-8 space-y-8">
+          
+          {book.contributors && book.contributors.length > 0 && (
+            <section>
+              <h2 className="text-xl font-semibold mb-4">Contributors</h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {book.contributors.map((contributor: any, i: number) => (
+                  <div key={i} className="flex items-center gap-3 p-3 rounded-lg border border-border bg-card">
+                    {contributor.authorImage ? (
+                      <img
+                        src={contributor.authorImage}
+                        alt={contributor.authorName}
+                        className="h-10 w-10 rounded-full object-cover bg-muted"
+                      />
+                    ) : (
+                      <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center shrink-0">
+                        <User className="h-5 w-5 text-muted-foreground" />
+                      </div>
+                    )}
+                    <div>
+                      <div className="font-medium">{contributor.authorName}</div>
+                      <Badge variant="outline" className="text-[10px] h-5 px-1.5 font-normal mt-1">
+                        {contributor.role}
+                      </Badge>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {book.editions && book.editions.length > 0 && (
+            <section>
+              <h2 className="text-xl font-semibold mb-4">Editions</h2>
+              <div className="rounded-lg border border-border bg-card overflow-hidden shadow-sm">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border bg-muted/30">
+                        <th className="h-10 px-4 text-left font-medium text-muted-foreground w-16">Cover</th>
+                        <th className="h-10 px-4 text-left font-medium text-muted-foreground">Format</th>
+                        <th className="h-10 px-4 text-left font-medium text-muted-foreground">Publisher</th>
+                        <th className="h-10 px-4 text-left font-medium text-muted-foreground">Length</th>
+                        <th className="h-10 px-4 text-left font-medium text-muted-foreground">Release Date</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {book.editions.slice(0, 10).map((edition: any, i: number) => (
+                        <tr key={i} className="border-b border-border last:border-0">
+                          <td className="p-2">
+                            <div className="h-12 w-8 bg-muted rounded overflow-hidden">
+                              {edition.coverUrl && (
+                                <img src={edition.coverUrl} alt="" className="h-full w-full object-cover" />
+                              )}
+                            </div>
+                          </td>
+                          <td className="p-4 align-middle">
+                            <div className="font-medium">{edition.editionFormat || edition.format}</div>
+                            <div className="text-xs text-muted-foreground mt-0.5">
+                              {edition.isbn13 || edition.isbn10 || edition.asin || '-'}
+                            </div>
+                          </td>
+                          <td className="p-4 align-middle">
+                            <span className="truncate max-w-[200px]" title={edition.publisherName}>
+                              {edition.publisherName || '-'}
+                            </span>
+                          </td>
+                          <td className="p-4 align-middle">
+                            {edition.audioSeconds ? (
+                              <span>{Math.floor(edition.audioSeconds / 3600)}h {Math.floor((edition.audioSeconds % 3600) / 60)}m</span>
+                            ) : edition.pageCount ? (
+                              <span>{edition.pageCount} pages</span>
+                            ) : (
+                              <span className="text-muted-foreground">-</span>
+                            )}
+                          </td>
+                          <td className="p-4 align-middle">
+                            {edition.releaseDate ? new Date(edition.releaseDate).toLocaleDateString() : '-'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+          )}
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Book Details Card */}
             <div className="bg-card border rounded-lg p-6">
